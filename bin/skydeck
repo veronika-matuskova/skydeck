@@ -1,0 +1,59 @@
+#!/bin/sh
+# skydeck launcher: picks the Node.js binary and runs bin/bootstrap.mjs with the same arguments.
+#
+# Node is chosen by, in order:
+#   1. $SKYDECK_NODE
+#   2. the symlink <dataDir>/node, if it points at an executable, where <dataDir> is
+#      $SKYDECK_HOME/data when SKYDECK_HOME is set (tests), else
+#      ${XDG_DATA_HOME:-$HOME/.local/share}/skydeck (design 9.1)
+#   3. `node` from PATH
+# so the launcher does not depend on the shell's default Node version.
+
+# A set CDPATH would make the relative `cd`s below land in the wrong directory.
+unset CDPATH
+
+# Find the real location of this file; it may be reached through (a chain of) symlinks.
+self=$0
+while [ -h "$self" ]; do
+  dir=$(cd -P -- "$(dirname -- "$self")" && pwd) || exit 1
+  target=$(readlink -- "$self") || exit 1
+  case $target in
+    /*) self=$target ;;
+    *) self=$dir/$target ;;
+  esac
+done
+root=$(cd -P -- "$(dirname -- "$self")/.." && pwd) || exit 1
+
+# True if $1 can be run: an executable regular file when it is a path, a command on PATH when it
+# is a bare name. (`-x` alone is true for directories, and `command -v` of a path only checks that
+# it exists, so neither is enough by itself.)
+runnable() {
+  case $1 in
+    */*) [ -f "$1" ] && [ -x "$1" ] ;;
+    *) command -v "$1" >/dev/null 2>&1 ;;
+  esac
+}
+
+if [ -n "${SKYDECK_HOME:-}" ]; then
+  linked_node=$SKYDECK_HOME/data/node
+else
+  linked_node=${XDG_DATA_HOME:-$HOME/.local/share}/skydeck/node
+fi
+if [ -n "${SKYDECK_NODE:-}" ]; then
+  node=$SKYDECK_NODE
+elif runnable "$linked_node"; then
+  node=$linked_node
+else
+  node=node
+fi
+
+if ! runnable "$node"; then
+  echo "skydeck: cannot run '$node'; install Node.js or set SKYDECK_NODE to a node binary." >&2
+  exit 127
+fi
+
+# Cache compiled modules between runs; the start-up time of a short command is mostly compiling.
+NODE_COMPILE_CACHE=${NODE_COMPILE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/skydeck/compile-cache}
+export NODE_COMPILE_CACHE
+
+exec "$node" "$root/bin/bootstrap.mjs" "$@"
