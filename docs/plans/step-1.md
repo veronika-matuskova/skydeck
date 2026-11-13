@@ -1116,8 +1116,23 @@ export interface LiveFile {
  * Reads <claudeHome>/sessions/ — only names matching ^[0-9]+\.json$ are opened (the directory also
  * holds credential files). Files that do not parse, or lack a numeric pid or a string sessionId,
  * are skipped. Sorted by pid.
+ *
+ * Ruled at review: the pid must be a positive safe integer and equal to the number in the file's
+ * name (`4242.json` holds pid 4242; `04242.json` is skipped), and the sessionId must satisfy
+ * `isSessionId` (anything else identifies nothing, and an id is put after `--resume`). A file that
+ * cannot be read (permissions, or a directory with such a name), and a sessions directory that
+ * cannot be listed, are skipped, not thrown: 6.2 treats "no live-session file can be read" as state
+ * `running`. Epoch-millisecond times are numbers from 0 to 8.64e15 (a fraction is truncated);
+ * anything else gives null, so no later conversion to an ISO string can throw.
  */
 export function readLiveFiles(files: Files, claudeHome: string): LiveFile[];
+
+/**
+ * Ruled at review: true for a lowercase UUID (8-4-4-4-12 hex digits) and nothing else. Every session
+ * id taken from a Claude Code file passes this check (live files here, transcript file names in
+ * transcripts.ts); a value such as `--dangerously-skip-permissions` must never reach a command line.
+ */
+export function isSessionId(text: string): boolean;
 
 /** 5.5: bootId equals currentBootId, /proc/<pid>/stat exists, and its field 22 equals procStart (non-null). */
 export function isAlive(p: ProcessKey, proc: Proc, currentBootId: string | null): boolean;
@@ -1134,24 +1149,54 @@ export interface TranscriptFile { path: string; sessionId: string; size: number;
 /**
  * <claudeHome>/projects/<folder>/<uuid>.jsonl, exactly two levels deep, name exactly a lowercase
  * UUID + '.jsonl', regular files only. Sorted by path. Folder names are never parsed.
+ *
+ * Ruled at review: "regular" is read with lstat, so a symbolic link to a file is not listed; a
+ * symbolic link to a project folder is followed (a relocated folder still counts). `files` is sorted
+ * by the whole path in UTF-16 code units, not by folder and then name. The name's id must satisfy
+ * `isSessionId` (2.5.4).
+ *
+ * Ruled at review: it never throws for one bad entry. A folder or file that cannot be looked at or
+ * listed (a symbolic link loop, permissions), or an unreadable `projects` directory, goes into
+ * `unreadable` (sorted by path, with the error code) and the rest is listed. A listing with
+ * anything in `unreadable` is partial, and what is missing from it must not be taken for deleted:
+ * task 8 marks no transcript missing at or under an unreadable path, and `doctor` (task 17) reports
+ * the entries. A path that is simply not there (ENOENT) is not unreadable.
  */
-export function listTranscriptFiles(files: Files, claudeHome: string): TranscriptFile[];
+export function listTranscriptFiles(files: Files, claudeHome: string): { files: TranscriptFile[]; unreadable: UnreadableEntry[] };
+
+/** A folder or file that could not be looked at or listed, and why: the error code ('ELOOP', 'EACCES'), else 'unknown error'. */
+export interface UnreadableEntry { path: string; reason: string }
 
 export interface TranscriptFacts {
-  firstCwd: string | null;        // first record carrying a string cwd
-  entrypoint: string | null;      // first record carrying a string entrypoint
+  firstCwd: string | null;        // first record carrying a non-empty string cwd (ruled at review: an empty one is no value)
+  entrypoint: string | null;      // first record carrying a non-empty string entrypoint (same)
   aiTitle: string | null;         // latest 'ai-title' record's aiTitle
   customTitle: string | null;     // latest 'custom-title' record's customTitle
   firstRecordNs: Ns | null;       // smallest parseable timestamp
   lastRecordNs: Ns | null;        // largest parseable timestamp
-  lastUserNs: Ns | null;          // largest timestamp of a record with type 'user'
-  lastTurnRole: 'user' | 'assistant' | null;   // type of the last (in file order) 'user' or 'assistant' record
+  lastUserNs: Ns | null;          // largest timestamp of a 'user' record that is the user's own input (ruled at review, below)
+  lastTurnRole: 'user' | 'assistant' | null;   // type of the last (in file order) 'assistant' record or 'user' record that is a turn
 }
 export const EMPTY_FACTS: TranscriptFacts;   // all null
 
 /**
  * Folds complete JSONL lines into facts. Lines that are not JSON objects are skipped. Returns the
  * prUrl of every 'pr-link' record with a string prUrl, in order. Keeps no message text.
+ *
+ * Ruled at review: not every 'user' record is a turn, and not every turn is the user's input.
+ * A 'user' record is a TURN (`lastTurnRole` becomes 'user') when it carries a string `turnOrigin`
+ * of any value (check this first: Claude Code writes one for every record it sends to the model,
+ * and `isMeta` alone would hide messages of other agents and scheduled wakeups); a record without
+ * one is a turn unless `isMeta`, `isCompactSummary` or `isSidechain` is true, or its text (the
+ * message content when a string, else the first text block) starts with `<command-name>`,
+ * `<command-message>`, `<local-command-stdout>`, `<local-command-stderr>`, `<local-command-caveat>`,
+ * `<bash-input>`, `<bash-stdout>`, `<bash-stderr>` or `[Request interrupted`. A 'user' record is
+ * INPUT (`lastUserNs`, which decides whether a done session comes back) when its `turnOrigin` is
+ * `human`; with any other `turnOrigin` (peer, scheduled, task_notification, sdk, ...) it is not;
+ * without one it is input when it is a turn, not a tool result (`toolUseResult` present, or a
+ * `tool_result` content block) and its `promptSource` is not `system` (older versions wrote the
+ * notice of a finished background task so). The text is compared and dropped. A shape that is not
+ * recognised is a turn. A user record always counts for the cwd, the entrypoint and the record times.
  */
 export function foldLines(facts: TranscriptFacts, lines: readonly string[]): { facts: TranscriptFacts; prUrls: string[] };
 
@@ -1160,6 +1205,13 @@ export interface TranscriptRead { facts: TranscriptFacts; sizeRead: number; prUr
  * Reads bytes [previous.sizeRead, file.size) — or from 0 with EMPTY_FACTS when previous is null or
  * file.size < previous.sizeRead (shrunk) — splits on byte 0x0A, folds the complete lines, and
  * leaves a last line without a newline for the next read (sizeRead stops after the last 0x0A).
+ *
+ * Ruled at review: the file is read in pieces of 4 MiB and each line is decoded on its own (one
+ * decoded string of a transcript of hundreds of megabytes would exceed V8's string limit); sizeRead
+ * counts the bytes actually returned. It throws what Files.readBytes throws, for example when the
+ * file has vanished since it was listed. Before reading from `previous.sizeRead` it checks that the
+ * byte just before it is a newline (it always is in the file the offset came from); when it is not,
+ * the file was replaced and is read from the start.
  */
 export function readTranscript(files: Files, file: TranscriptFile, previous: { facts: TranscriptFacts; sizeRead: number } | null): TranscriptRead;
 ```
@@ -2757,11 +2809,13 @@ export interface LiveFile {
   updatedAtNs: Ns | null; statusUpdatedAtNs: Ns | null; mtimeNs: Ns;
 }
 export function readLiveFiles(files: Files, claudeHome: string): LiveFile[];
+export function isSessionId(text: string): boolean;   // lowercase UUID, ruled at review (2.5.4)
 export function isAlive(p: ProcessKey, proc: Proc, currentBootId: string | null): boolean;
 export function isLiveFileTrusted(f: LiveFile, proc: Proc): boolean;
 // src/claude/transcripts.ts
 export interface TranscriptFile { path: string; sessionId: string; size: number; mtimeNs: Ns }
-export function listTranscriptFiles(files: Files, claudeHome: string): TranscriptFile[];
+export interface UnreadableEntry { path: string; reason: string }
+export function listTranscriptFiles(files: Files, claudeHome: string): { files: TranscriptFile[]; unreadable: UnreadableEntry[] };
 export interface TranscriptFacts {
   firstCwd: string | null; entrypoint: string | null; aiTitle: string | null; customTitle: string | null;
   firstRecordNs: Ns | null; lastRecordNs: Ns | null; lastUserNs: Ns | null;
@@ -2790,8 +2844,11 @@ export function readTranscript(files: Files, file: TranscriptFile, previous: { f
 - Layout: `C/projects/-home-dev-projects-demo/<S1>.jsonl`, `C/projects/other/<S2>.jsonl`,
   `C/projects/-home-dev-projects-demo/<S1>/subagents/agent-1.jsonl`, `…/<S1>.jsonl.bak`,
   `…/<S1> (copy).jsonl`, `…/<S1 uppercased>.jsonl`, `…/notes.txt`, a directory `…/<S3>.jsonl/` →
-  `listTranscriptFiles` returns exactly the first two, sorted by path, with `sessionId`, `size`, `mtimeNs`.
-  `C/projects` missing → `[]`.
+  `listTranscriptFiles(...).files` is exactly the first two, sorted by path, with `sessionId`, `size`, `mtimeNs`;
+  `unreadable` is `[]`. `C/projects` missing → `{ files: [], unreadable: [] }`.
+- A symbolic link loop in `C/projects`, a folder of mode `000` (skipped when root) and a failing `stat`, `list` or `lstat` →
+  the rest is listed and the entry is in `unreadable` with its path and error code (`ELOOP`, `EACCES`); `projects` itself unreadable →
+  `{ files: [], unreadable: [{ path: <projects>, reason }] }`; an entry that is gone (`stat` null) is not reported.
 - `foldLines(EMPTY_FACTS, [user line cwd '/w', entrypoint 'cli', timestamp '2026-11-12T09:00:00.000Z'])` →
   `firstCwd '/w'`, `entrypoint 'cli'`, `firstRecordNs = lastRecordNs = lastUserNs = T0`,
   `lastTurnRole 'user'`.
@@ -3020,7 +3077,10 @@ Rules that are part of this task (design 5.3–5.6, 9.1):
   the row's facts and `sizeRead`, or null) → `saveTranscript` with `missingSinceNs null`, then
   for each `prKey(url)` that is non-null: `ensurePr`, `attachPr(sessionId, url, 'auto', now)`
   (counting distinct new attachments). Rows whose path was not listed and `missingSinceNs` null
-  get `missingSinceNs = now`. At the end `setKv('first_scan_done', '1')`.
+  get `missingSinceNs = now` — except a row whose path equals an `unreadable` path reported by
+  `listTranscriptFiles` or lies under `<unreadable path>/` (an unreadable `projects` covers every
+  row): what is missing from a partial listing must not be taken for deleted. Other rows are marked
+  as usual, and the scan still reads what it can. At the end `setKv('first_scan_done', '1')`.
 
 **Test cases** (`testDeck(t)`; `put(fields, seq)` writes `spoolText(fields)` as `spoolName(fields, seq)` into `spoolDir`; `P` = pid 4242 / procStart 51234567 / `BOOT_A`)
 
@@ -3076,6 +3136,9 @@ Rules that are part of this task (design 5.3–5.6, 9.1):
 5. Rewrite S1's file shorter → re-read from the start; facts come only from the new content.
 6. Delete S2's file → its row `missingSinceNs` = clock now, `missing 1`; scan again at a later clock → `missingSinceNs` unchanged;
    file restored → `missingSinceNs null`.
+6a. A project folder that cannot be read (a failing `list` through a wrapped `Files`) holding S2's transcript → S2's row is NOT marked
+   missing; the other transcripts are still read, and a transcript deleted from another folder IS marked missing. With `projects`
+   itself unreadable nothing is marked missing.
 7. `pr-link` urls `https://github.com/O/R/pull/7/files`, `https://github.com/o/r/pull/8`, `https://github.com/o/r/pull/7`, `https://example.com/x` →
    `prs()` urls `['https://github.com/o/r/pull/7', 'https://github.com/o/r/pull/8']`; both attached to S1 with origin `auto`; `prsAttached 2`.
 8. `detachPr(S1, …/pull/7)`, then rewrite the file shorter with the same `pr-link` (full re-read) → still detached.
@@ -3933,7 +3996,9 @@ export const command: Command;   // in each of the three files
   (`hookStatus`); `hookPath` not resolving to a regular file (`files.stat` kind `file`); `checkNodeVersion(platform.nodeVersion)`
   (from `bin/node-version.mjs`) returns a message; the database not writable (`setKv('doctor_probe', <now>)`
   throws); files in `spool/bad/`; more than 1000 files in the spool; `gh --version` not found;
-  `gh auth status` exit code ≠ 0; terminal `wezterm` and `wezterm cli list` fails. Info: spool
+  `gh auth status` exit code ≠ 0; terminal `wezterm` and `wezterm cli list` fails; an entry of
+  `<claudeHome>/projects` that cannot be read (`listTranscriptFiles(platform.files, deck.places.claudeHome).unreadable`, one
+  line each: `transcripts: cannot read <path> (<reason>)`, the path through the sanitiser). Info: spool
   count, age of the last event (`last event <formatAge> ago` or `no events yet`), the last 5 lines
   of `hook.log` (or `hook.log is empty`), `scripted runs dropped: <n>`.
 
@@ -3963,14 +4028,14 @@ export const command: Command;   // in each of the three files
 1. After a complete install with one event → 0; every line starts with `ok` or `info`; contains `info     last event`.
 2. Each problem alone → 1 with a `problem` line: no hook entries; `H` dangling (re-point `H` at a temporary file, then delete that file — never touch the repository's `bin/skydeck-hook`);
    `nodeVersion '24.11.0'`; a file in `spool/bad/`; 1001 files in the spool; `gh` not found; `gh auth status` code 1;
-   config terminal `wezterm` with `wezterm cli list` code 1.
+   config terminal `wezterm` with `wezterm cli list` code 1; a symbolic link loop in `<claudeHome>/projects` (`transcripts: cannot read … (ELOOP)`).
 3. `hook.log` with 7 lines → output contains its last 5 lines, not the first 2.
 4. `dropped_scripted 3` → `info     scripted runs dropped: 3`.
 
 **Steps**
 - [ ] Write the three test files. `npm test` → fails.
 - [ ] Implement the three commands.
-- [ ] Update design 8 (D20). `npm run format`; `npm run check` → pass. Commit `Add install, uninstall and doctor`; open the PR.
+- [ ] Update design 8 (D20; and the list of what `doctor` reports: a project folder or transcript that cannot be read, see 5.6). `npm run format`; `npm run check` → pass. Commit `Add install, uninstall and doctor`; open the PR.
 
 **Done when:** all cases pass; install twice changes once; foreign hook entries always survive;
 nothing but the two hook entries is ever written into Claude Code's settings.
