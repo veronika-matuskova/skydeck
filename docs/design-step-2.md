@@ -173,7 +173,8 @@ Added to design 11:
 | `bin/skydeck-keepalive` | The keep-alive's inner script (6.1): `sh` builtins, `sleep` and `mv` only. | — |
 | `src/claude/terminal.ts` | What Claude Code sets in its children's environment (7.4); the meaning of a live-file status change for a turn end (10.3). | platform |
 | `src/window/` | The server: HTTP and WebSocket (8.2), authentication (15), keeper connections (8.1), screen sides (7.2), the view model of the page (12), the server's tick (10.1), Edge and the keep-alive (5, 6), and the `window` terminal (11.2), which only the server uses. | platform, text, store, claude, sessions, terminals, github |
-| `src/window/protocol.ts` | The messages of 8.2 and 8.3 as TypeScript types, with JSDoc the page's type check reads: the definition of every message's fields. | — |
+| `src/window/protocol.ts` | The messages of 8.2 and 8.3 as TypeScript types, with JSDoc the page's type check reads: the definition of every message's fields. | `src/claude/session-id.ts` only (the session-id rule; it imports nothing) |
+| `src/window/frames.ts` | The keeper frames of 8.1: the byte layout the server and the keeper share, and parsers for the keeper's payloads. | `src/claude/session-id.ts` only |
 | `src/window/view/` | The page's view model as pure functions: sections, rows, stacks, attention, the switcher's ranking, the filter (12). | sessions (types), text |
 | `web/` | The page: `index.html`, plain JavaScript modules with JSDoc types (checked by `tsc`), CSS. No bundler, no build step: the files are served as they are. | `vendor/xterm/` |
 | `web/keys.js` | The key table (12.9) and the terminal key mapping (9.1), as pure functions. | — |
@@ -897,7 +898,7 @@ Page → server (after `hello` and `start`, 8.2.2):
 | `t` | Fields | Effect |
 |---|---|---|
 | `ping` | `n` | `pong` with the same `n`, `bootId`, `serverId`. |
-| `view` | `filter`, `chips`, `unfolded`, `showDone`, `selected` | The page's view state; the server answers with `list` and keeps sending `list` when it changes (12). |
+| `view` | `filter`, `chips` (from stage E; stage A's `view` has none), `unfolded`, `showDone`, `selected` | The page's view state; the server answers with `list` and keeps sending `list` when it changes (12). |
 | `focus` | `focused`, `selected`, `area` (`cols`, `rows`: what the terminal area holds at the page's font) | Window focus, selection and terminal area, for seen (12.4), notifications (13), the size owner and the first size of a terminal the command line or a restore opens (8.2.6). Sent on every change and after `start`. |
 | `attach` | `term`, `cols`, `rows` | Start a terminal stream (8.2.4). The page's size is a proposal (8.2.6). |
 | `detach` | `term` | Stop it. |
@@ -919,7 +920,9 @@ Page → server (after `hello` and `start`, 8.2.2):
 | `open-link` | `url` | 9.6. |
 | `dismiss-restore` | `bootId` | 12.7. |
 
-An unknown kind or field is refused. No action carries a program or an argument list to run (8.3):
+An unknown kind or field is refused, and so is a string over its limit (in UTF-8 bytes: paths and
+URLs 4,096, `input.data` 64 KiB, other text 1,024; the action of 9.6 then opens a URL only up to
+2,048 characters) or a size that is not a whole number from 1 to 65,535. No action carries a program or an argument list to run (8.3):
 `resume` names a session, and `new`'s directory, label, group and `claude` flags are the only
 fields that become part of a launch, checked as `skydeck new` checks them.
 
@@ -929,13 +932,13 @@ Server → page:
 |---|---|
 | `challenge`, `welcome` | 8.2.2. |
 | `pong` | `n`, `bootId`, `serverId`. |
-| `list` | The view model (12), sent whole (about 50 KB for 100 sessions) when it changed, at most once a second: `counts`; `sections` (`open`, `week`, `earlier`, each with `folded`, its time span and its `rows`); `doneHidden`; `banner` (12.7, or null); `terminals` (`id`, `slot`, `sessionId`, `state`, `cols`, `rows`, whether this page owns the size). A row carries the list row's display fields (design 7.4: id, short id, title and its source, group and its source, state and detail, times, directory, marks, note mark and the note's first three lines, done, pull requests, chip) and the window's own: `terminal`, `slot`, `elsewhere` (running in another terminal), `attention` (null, or reason, detail and since), `stack`. |
+| `list` | The view model (12), sent whole (about 50 KB for 100 sessions) when it changed, at most once a second: `counts`; `sections` (`open`, `week`, `earlier`, each with `folded`, its time span and its `rows`); `doneHidden`; `banner` (12.7, or null); `terminals` (`id`, `slot`, `sessionId`, `state`, `notReported` (7.5's "started, not reported"), `cols`, `rows`, whether this page owns the size); `selected`: for the session the page's `view` names, what the resume card shows (12.6: the exact command, the flags that will not be passed on, how it ended, expiring or expired), or null; `dirs`: the known project directories, most recent first (12.6's new form). A row carries the list row's display fields (design 7.4: id, short id, title and its source, group and its source, state and detail, times, directory, marks, note mark and the note's first three lines, done, pull requests, chip) and the window's own: `terminal`, `slot`, `elsewhere` (running in another terminal), `attention` (null, or reason, detail and since), `stack`. |
 | `snap` | `term`, `ch` (the channel number for its output), `cols`, `rows`, `data` (the snapshot). |
 | `size` | `term`, `cols`, `rows`, `owner` (this page or another): the terminal's size changed, in stream order. |
 | `exit` | `term`, `code`, `signal`, `atNs`, `lost`, `notStarted` (null, or the reason the program was never started, 8.1). |
-| `result` | `id`, `ok`, `lines` (what the command line would print, design 7.6), `error`. |
+| `result` | `id`, `ok`, `lines` (what the command line would print, design 7.6), `error`, `sessionId` (the session a successful `resume` or `new` started, so that the page can select its row, 11.3; else null). |
 | `notify` | `sessionId`, `title`, `reason` (13). |
-| `notice` | `kind` (`keepalive-lost`, `keepalive-back`, `gap`, `newer-keeper`, `input-full`, `restore-progress`), `text`. |
+| `notice` | `kind` (`keepalive-lost`, `keepalive-back`, `gap`, `newer-keeper`, `input-full`, `tick-failed`, `restore-progress`), `term` (the terminal a `gap`, `newer-keeper` or `input-full` notice concerns; null for the others), `text`. `tick-failed` ("skydeck could not refresh the list: <reason>; it tries again") is sent once when a tick fails (10.1) and not again until a tick has succeeded. |
 | `bye` | `reason` (5.5). |
 
 Output is sent in binary frames: one byte 1, the channel number as a 4-byte big-endian integer,
@@ -1010,8 +1013,8 @@ absolute and existing, no flag that picks a session or names it). The program is
 
 | Request | Answer |
 |---|---|
-| `GET /ping` | `{ serverId, bootId, build, protocol, pid, port }`. |
-| `GET /status` | `{ pages, terminals: [{ id, slot, state, sessionId, pid }], keepAlive, python }`, for `skydeck window` and `doctor`. |
+| `GET /ping` | `{ serverId, bootId, build, protocol, pid, port, checkout }` (`checkout`: the checkout the server runs from, which 5.1 compares). |
+| `GET /status` | `{ pages, terminals: [{ id, slot, state, sessionId, pid }], keepAlive, python, build, checkout, startedAtNs, envOrigin }` (`envOrigin`: where the server's environment came from and when, 5.2), for `skydeck window` and `doctor`. |
 | `POST /resume` | `{ sessionId }` → `prepareResumeById` and the window terminal (11.2) → `{ code, lines }`: the exit code and the lines `skydeck resume` prints (design 7.6), refusals included. |
 | `POST /new` | `{ dir, label, group, flags }` (`flags` an array of strings) → `prepareNew` with `dir` (absolute, an existing directory) and the refusals of design 7.7 → `{ code, lines, sessionId }`. |
 | `POST /restore` | `{ sessionIds, all }` → 11.4. The answer is a stream of JSON lines: one per report line of the run, the last one the outcome. |
