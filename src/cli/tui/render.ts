@@ -19,9 +19,25 @@ const ELLIPSIS = '…';
 const LOW_SURROGATE_FIRST = 0xdc00;
 const LOW_SURROGATE_LAST = 0xdfff;
 
+/** The states in the order the list puts them inside a group (design 7.4). */
+const STATES: readonly ListRow['state'][] = ['waiting', 'working', 'running', 'not-running'];
+
+/**
+ * The program, how many rows are visible, the filter and "(all)", then how many of the rows are in
+ * each state (fix 4: with the order kept between refreshes, a session that starts waiting can be
+ * out of view; this line still shows it). The counts come last, so that on a narrow terminal they
+ * are what is cut, not the filter or "(all)".
+ */
 function titleLine(model: TuiModel): string {
+  const visible = visibleRows(model);
+  const counts = STATES.flatMap((state) => {
+    const count = visible.filter((row) => row.state === state).length;
+    return count === 0 ? [] : [`${count} ${state}`];
+  });
   const filter = model.filter === '' ? '' : `  filter: ${sanitize(model.filter)}`;
-  return `skydeck  ${visibleRows(model).length} sessions${filter}${model.showAll ? '  (all)' : ''}`;
+  const all = model.showAll ? '  (all)' : '';
+  const states = counts.length === 0 ? '' : `  ${counts.join(' · ')}`;
+  return `skydeck  ${visible.length} sessions${filter}${all}${states}`;
 }
 
 /** The end of `text` that is at most `units` UTF-16 units long and does not start inside a surrogate pair. */

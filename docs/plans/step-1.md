@@ -194,6 +194,14 @@ export type Ns = bigint;
 export interface Clock {
   nowNs(): Ns;
   sleep(ms: number): Promise<void>;
+  /**
+   * (Added by fix 4, ruled by the plan owner: the interactive list's background refresh.) Calls `callback` every `ms`
+   * milliseconds (a positive whole number; RangeError otherwise) until the returned function is called (again: no
+   * effect). The real clock uses `setInterval` with `unref()`, so the timer does not keep the process alive by itself;
+   * the fake one calls `callback` from `advanceMs` (and so from `sleep`) once per period that passed, at its time.
+   * `callback` must not throw: a timer has nobody to report to (the real one would end the process).
+   */
+  every(ms: number, callback: () => void): () => void;
 }
 
 export interface FileInfo {
@@ -444,8 +452,11 @@ export class RestoreStoppedError extends SkydeckError {
 /** The constants of section 3, shared by every test. */
 export const T0: Ns, SEC: Ns, S1: string, S2: string, S3: string, BOOT_A: string, BOOT_B: string;
 export interface FakeClock extends Clock {
-  setNs(ns: Ns): void;
-  advanceMs(ms: number): void;      // sleep(ms) calls this and resolves on the next microtask
+  setNs(ns: Ns): void;              // calls no timer of `every`; (fix 4) each running one is next due one period
+                                    // after `ns`, as a real interval is after the wall clock jumped
+  advanceMs(ms: number): void;      // sleep(ms) calls this and resolves on the next microtask; (fix 4) every timer of
+                                    // `every` that falls due on the way is called at its time, in time order
+  timers(): number;                 // (fix 4) the timers of `every` that run: started and not stopped
 }
 export function fakeClock(startNs: Ns): FakeClock;
 
@@ -704,6 +715,12 @@ export interface Store {
   readonly path: string;
   /** Closes the connection; a second call does nothing. */
   close(): void;
+  /**
+   * (Added by fix 4.) PRAGMA data_version: differs from what the previous call returned when another connection
+   * (another skydeck) committed in between; this connection's own commits do not change it. The interactive list
+   * reads it to tell whether its rows can have changed.
+   */
+  dataVersion(): number;
   /** The connection's PRAGMA values (they are per connection, so tests read them here). */
   connectionSettings(): { journalMode: string; synchronous: number; busyTimeout: number; foreignKeys: number };
   /** Runs fn inside BEGIN IMMEDIATE … COMMIT; rolls back and rethrows on error. Not re-entrant. */
@@ -2121,8 +2138,10 @@ export function initModel(rows: readonly ListRow[], nowNs: Ns): TuiModel;
  * append new rows, and rows whose group changed, to the end of their group (a new named group goes before "no group", which
  * is last), drop emptied groups. `order` always holds the done rows too, with the groups ranked by the members listed under
  * the current `showAll` (design 7.4), as `skydeck ls` ranks them; a group with nothing listed comes after the others.
- * When the selected row is no longer visible the selection moves to the first visible row and an open detail or input is
- * closed (`mode` is 'list' afterwards).
+ * When the selected row is no longer visible the selection moves to the row that takes its place — the next row after it
+ * in the order shown before that is still visible, else the nearest one before it, else the first visible row (ruled in
+ * fix 4: before, it was always the first visible row, and a key pressed next acted on a session far from the one the
+ * user chose) — and an open detail or input is closed (`mode` is 'list' afterwards).
  */
 export function withRows(model: TuiModel, rows: readonly ListRow[], nowNs: Ns, reorder: boolean): TuiModel;
 export function withMessage(model: TuiModel, message: string | null): TuiModel;
@@ -4838,7 +4857,8 @@ export const command: Command;
   command: when it cannot be found the installation is broken, and it fails as an unknown command
   does, usage on stderr and exit 2); both go through the same error mapping as `command.run` (task
   12); `--help` keeps printing the usage
-- Modify (ruled by the plan owner): `src/platform/types.ts`, `src/platform/real.ts` (`RunOptions.signal`, 2.2),
+- Modify (ruled by the plan owner): `src/platform/types.ts`, `src/platform/real.ts` (`RunOptions.signal`, 2.2; and,
+  added by fix 4, `Clock.every`, 2.2.1, with the fake clock's `every` and `timers()` in `test/helpers/platform.ts`, 2.2.7),
   `src/github.ts` (`signal` of `fetchPrs` / `refreshPrs`, 2.6), `src/cli/context.ts` (`Io.onResize`,
   `Io.onTerminate`, 2.9.1), and the test helpers `test/helpers/platform.ts` (the fake runner honours the signal),
   `test/helpers/capture.ts` and `test/helpers/context.ts` (`resize(size)` triggers `onResize`, `terminate(signal)`
@@ -4866,7 +4886,39 @@ frame (`\x1b[H\x1b[2J` + `render(...).join('\r\n')`), then start a background `r
 refreshMinutes, signal }`; deps include `env: ctx.platform.env`, 2.6); when it settles having fetched or failed
 something, `loadRows` and `withRows(…, reorder false)` and repaint (nothing when it saved nothing; a rejection becomes
 the message, it never rejects). For every chunk from `io.keys()`: `decodeKeys`, then `reduce` per key, run the
-effect, repaint. Every model goes through `scrolled(model, size)`: after every key, every `withRows`, and every
+effect, repaint.
+
+**Background refresh** (added by fix 4, ruled by the plan owner: design 7.3 and 7.4 say the list refreshes "when it
+opens, and in the background"). After the first frame, `clock.every(5000, …)` (one named constant,
+`BACKGROUND_REFRESH_MS`; no configuration key). Each tick: `refresh(deck)` (the refresh every command starts with; not
+`refreshWithProgress`, nothing is written under the list), `loadRows` + `withRows(…, reorder false)` — the order is
+kept, the selection follows its session id, a new session goes to the end of its group (`keepOrder`) — and a frame
+only when it differs from the one on screen; then, unless a fetch of any kind is running, the automatic `refreshPrs`
+of the opening (`force: false`). Loading the rows costs time in proportion to everything recorded, so a tick loads
+them only when they can have changed: the refresh saved something (events ingested or observed, transcripts read or
+marked missing, pull requests attached), a live-session file (any of its fields, its modification time included:
+derive takes it as the last sign of a process that is gone) or whether it is trusted changed, `store.dataVersion()`
+moved (another skydeck saved something: it may have ingested the spool first), or the previous tick failed (its
+refresh may have saved something before it failed); and at least once a minute (`FULL_RELOAD_NS`, for what that check does not see: expiry, a holder without a live file, Claude
+Code's settings). Otherwise only the time moves on (`withRows` with the rows in hand), so the times shown stay right.
+When the selected session leaves the list at any reload (a tick, `r`, a fetch, the editor's return), the cursor goes
+to the row that takes its place (2.9.5) and the message line says `session "<label>" left the list` (the short id
+when it has no label); after `r` that comes first, followed by `refreshing pull requests…`, and stays when the fetch
+has ended. A background failure message is taken away when that work next succeeds, if it is still shown. The title
+line counts the visible sessions in each state (`2 waiting · 3 working · 11 not-running`), in the list's order of the
+states, so that a session that starts waiting out of view is still seen; the counts come after the filter and
+`(all)`, so that a narrow terminal cuts them and not those. The deck part is synchronous, so two can never overlap; a fetch still running at
+the next tick is not joined by another one, and an automatic fetch never starts while the fetch of `r` runs. A tick
+does nothing while a key's effect is carried out (a tab being opened), while the list is off screen (the editor, a
+hand-off, after the end) and while an input is open (a reload could close it; the next tick after it refreshes); in
+the filter and the detail it refreshes as usual. A failure (of the refresh, or of an automatic fetch) is the message
+line once: the same failure again says nothing more until that work has succeeded; it never ends the list. Measured
+with the real files and `/proc` and 4 live processes: at 300 sessions (246 MB of transcripts) a tick that always
+loaded the rows cost 18 ms (median; p95 35 ms); at 3,000 sessions it cost 70 ms (loading the 7,243 events 30 ms,
+deriving 14 ms, the scan 11 ms), and with the change check a tick of the real list costs 15 ms (median; the
+once-a-minute reload 81 ms; mean of all ticks 21 ms), flat over 1,200 ticks. Known cost: with 3,000 transcripts on
+disk and all of them listed, an idle tick is about 60 ms, 40 of it the transcript scan (one `stat` per file); the
+follow-up, when it matters, is to scan less often than every tick. Every model goes through `scrolled(model, size)`: after every key, every `withRows`, and every
 resize (`io.onResize`, which also repaints at once). Nothing is painted while the alternate screen is left.
 
 Effects: `label`/`group` → `cleanLabel`/`cleanGroup` (empty text clears) + `setLabel`/`setGroup`; `note` → leave the
@@ -4899,7 +4951,7 @@ starts no second fetch (the message says one is running); when it settles, `load
 when it saved something, the message taken away, repaint.
 
 Giving the terminal back — on `quit`, the end of `io.keys()`, a `--here` resume, an error, SIGTERM, SIGHUP or an
-outside SIGINT: abort
+outside SIGINT: stop the background refresh's timer (fix 4), abort
 the fetches (one `AbortController` for all: an aborted fetch ends at once and saves nothing), write
 `\x1b[?7h\x1b[?25h\x1b[?1049l` (autowrap, cursor, normal screen), call `return()` on the key iterator, print the
 lines kept for the end on stderr; then (except for a signal, after which the process ends) unsubscribe and return —
@@ -4952,6 +5004,29 @@ parts beyond the first version of this paragraph were ruled by the plan owner af
     (After the re-check of review 2.) A second `r` after the first fetch finished fetches again and the message goes away;
     `r` while a fetch runs still re-reads and reorders; `q` while the fetch of `p` hangs returns at once; a failed
     background fetch is shown in the message line.
+13. (Fix 4, the background refresh; the fake clock's `advanceMs` fires the timer.) After 5 s, not before, a session
+    that started working and a new session are shown, the order and the selected session kept; a tick that changes
+    nothing on screen paints nothing (and still reads the spool); none while an input is open (what is typed stays,
+    the next tick after it refreshes), while the editor runs, or while a tab is being opened; a tick fetches the pull
+    requests that are due and starts no fetch while one runs, nor while the fetch of `r` runs; `q` while a tick's
+    fetch hangs returns at once and nothing is saved or painted after; a failing refresh, and a failing automatic
+    fetch, is said once, the list goes on, and a failure after a refresh that worked is said again. `clock.timers()` is
+    0 after `q`, ctrl-c, the end of the keys, an error, when the handoff is written and at SIGTERM / SIGHUP / SIGINT.
+    (After the review, ruled by the plan owner.) When the selected session leaves the list at a tick (done in another
+    skydeck), the cursor goes to the next row, not the first, the message names it once, and `d` then acts on that row;
+    the same on `r` (the message first, then `refreshing pull requests…`, and the notice left when the fetch ends); a
+    failure message goes away when that work succeeds again; a failed refresh starts no fetch; a tick while the filter
+    is typed keeps it open, and one in the detail shows the session as it is now; a tick that finds nothing new loads
+    no rows (counted by the reads of Claude Code's settings file) while the times shown move on; what another skydeck
+    saved, a live file that changed status and a process that ended without removing its file each show at the next
+    tick, and so does a new transcript; the rows are loaded again after a minute of ticks that found nothing; the
+    title line's counts follow a tick. (After the re-check, ruled.) Each reload condition is the only trigger in a
+    case of its own: an end event alone turns `working` into `not-running`; a session only its live file shows appears
+    at the tick after reconcile observed it; a deleted transcript takes its row away; a leftover live file whose
+    modification time alone changed gives `ended-unexpectedly`; after a tick that failed having ingested an event, the
+    next tick loads the rows. Over two minutes: one load for a change, none for the ticks that find nothing, one a
+    minute after the last loading. The notice of a session that left while the editor ran follows the outcome. On a
+    narrow title line the counts are cut, not the filter or `(all)`.
 
 **Steps**
 - [ ] Write both test files; replace the bare-`skydeck` test in `test/cli/main.test.ts`. `npm test` → fails.
