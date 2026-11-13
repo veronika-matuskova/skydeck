@@ -97,6 +97,47 @@ describe('processContext', () => {
     assert.equal(typeof ctx.io.keys, 'function');
   });
 
+  test("onResize calls back on standard output's resize event until it unsubscribes", () => {
+    const { io } = processContext();
+    let calls = 0;
+    const before = process.stdout.listenerCount('resize');
+
+    const unsubscribe = io.onResize(() => {
+      calls++;
+    });
+    process.stdout.emit('resize');
+    unsubscribe();
+    process.stdout.emit('resize');
+
+    assert.equal(calls, 1);
+    assert.equal(process.stdout.listenerCount('resize'), before);
+  });
+
+  for (const signal of ['SIGTERM', 'SIGHUP', 'SIGINT'] as const) {
+    test(`onTerminate runs its callback on ${signal}, then the process ends by that signal`, async (t) => {
+      const s = sandbox(t);
+      const script = `
+        import { processContext } from ${JSON.stringify(CONTEXT_MODULE)};
+        const { io } = processContext();
+        io.onTerminate((signal) => process.stdout.write('restored on ' + signal));
+        const off = io.onTerminate(() => process.stdout.write(' and never this'));
+        off();
+        setTimeout(() => process.stdout.write(' still alive'), 3000);
+        process.kill(process.pid, ${JSON.stringify(signal)});
+      `;
+
+      const result = await realPlatform().runner.run(
+        process.execPath,
+        ['--input-type=module', '--eval', script],
+        { env: s.env(), timeoutMs: 20_000 },
+      );
+
+      assert.equal(result.stdout, `restored on ${signal}`);
+      assert.equal(result.code, null, 'ended by the signal');
+      assert.equal(result.timedOut, false);
+    });
+  }
+
   test('isTTY and size describe the streams: pipes are not terminals and give 80x24', async (t) => {
     const { out } = await inChild(t, 'print({ tty: io.isTTY, size: io.size() });', '');
 

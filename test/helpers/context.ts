@@ -1,6 +1,6 @@
 import type { TestContext } from 'node:test';
 
-import type { Context } from '../../src/cli/context.ts';
+import type { Context, TerminateSignal } from '../../src/cli/context.ts';
 import type { Platform } from '../../src/platform/types.ts';
 import { capture } from './capture.ts';
 import type { CaptureOptions } from './capture.ts';
@@ -12,6 +12,12 @@ export interface TestCtx {
   stdout: () => string;
   stderr: () => string;
   prompts: string[];
+  /** Resizes the fake terminal (see `capture`). */
+  resize: (size: { columns: number; rows: number }) => void;
+  /** The keys() readers still open (see `capture`). */
+  openKeys: () => number;
+  /** Calls the onTerminate callbacks (see `capture`). */
+  terminate: (signal: TerminateSignal) => void;
 }
 
 /** A platform whose every member throws: enough for `--help` and `--version`, nothing more. */
@@ -44,7 +50,14 @@ export function testContext(
   options: TestPlatformOptions & CaptureOptions = {},
 ): TestCtx | (TestCtx & TestPlatform) {
   const captured = capture(options);
-  const shared = { stdout: captured.stdout, stderr: captured.stderr, prompts: captured.prompts };
+  const shared = {
+    stdout: captured.stdout,
+    stderr: captured.stderr,
+    prompts: captured.prompts,
+    resize: captured.resize,
+    openKeys: captured.openKeys,
+    terminate: captured.terminate,
+  };
   if (t === undefined) {
     return { ctx: { io: captured.io, platform: noPlatform() }, ...shared };
   }

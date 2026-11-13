@@ -255,6 +255,13 @@ export interface RunOptions {
   timeoutMs?: number;
   /** The child's complete environment; omitted → the environment of this process. Tests always pass sandbox.env(). */
   env?: Readonly<Record<string, string>>;
+  /**
+   * (Added by task 19, ruled by the plan owner.) When it fires, the child is killed (SIGKILL), nothing it started is
+   * waited for, and run() rejects with an Error named `AbortError`; already aborted: nothing is started and run()
+   * rejects. A signal that fires after run() answered changes nothing. The fake runner honours it the same way (an
+   * aborted call is not recorded).
+   */
+  signal?: AbortSignal;
 }
 
 export interface RunResult {
@@ -1389,10 +1396,14 @@ export function parseBatch(keys: readonly PrKey[], result: RunResult, atNs: Ns):
  * GH_FORCE_TTY and CLICOLOR_FORCE (the last beats NO_COLOR in `gh`) and with GH_PROMPT_DISABLED=1
  * and NO_COLOR=1 (the rest is passed, so `gh` finds
  * its login). Callers pass `env: ctx.platform.env`.
+ * `options.signal` (task 19, ruled by the plan owner) is passed to the runner and cancels: once it has fired no
+ * further batch starts and nothing more is saved, also when the answer of the batch in flight arrives anyway (and
+ * a rejection caused by the abort is not saved as a failure); the counts are those saved before.
  */
 export function fetchPrs(
   deps: { runner: Runner; clock: Clock; store: Store; env: Env },
   urls: readonly string[],
+  options?: { signal?: AbortSignal },
 ): Promise<{ fetched: number; failed: number }>;
 
 /**
@@ -1402,10 +1413,11 @@ export function fetchPrs(
  * `force: true` is the user's explicit refresh (`pr refresh`, `ls --refresh`, `show --refresh`, the list's refresh key),
  * `force: false` the automatic one (the list when it opens and in the background). With `sessionIds`, only the
  * pull requests that one of those sessions has attached count: the sessions the command is about.
+ * `signal` cancels as for fetchPrs (task 19: the interactive list stops its fetches when it ends).
  */
 export function refreshPrs(
   deps: { runner: Runner; clock: Clock; store: Store; env: Env },
-  options: { force: boolean; refreshMinutes: number; sessionIds?: readonly string[] },
+  options: { force: boolean; refreshMinutes: number; sessionIds?: readonly string[]; signal?: AbortSignal },
 ): Promise<{ fetched: number; failed: number }>;
 
 /** 7.3 chip, worst first. */
@@ -1822,7 +1834,7 @@ loaded by name. There is no registry: a command task creates its own file and it
 `test/cli/commands/<name>.test.ts` and edits no shared CLI file. Test helpers live in
 `test/helpers/` (`sandbox()`, `capture()`, `testContext()`).
 
-#### 2.9.1 `src/cli/context.ts` — extended once, by task 1
+#### 2.9.1 `src/cli/context.ts` — extended by task 1 (and `onResize` by task 19)
 
 ```ts
 export type Io = {
@@ -1835,6 +1847,19 @@ export type Io = {
   readLine(prompt: string): Promise<string | null>;
   /** Raw-mode input, one string per chunk read (task 19 splits chunks into keys). return() restores the terminal. */
   keys(): AsyncIterableIterator<string>;
+  /**
+   * (Added by task 19, ruled by the plan owner.) Calls `callback` whenever the terminal is resized (the real context:
+   * standard output's `resize` event; the fake one: `resize(size)` of `capture()` / `testContext()`); returns the
+   * function that unsubscribes it.
+   */
+  onResize(callback: () => void): () => void;
+  /**
+   * (Added by task 19, ruled by the plan owner.) Calls `callback` on SIGTERM, SIGHUP or SIGINT (sent from outside: in
+   * raw mode ctrl-c is a key) so that the terminal can be given back; once no subscriber is left the process ends by
+   * that signal (the real context re-raises it; the fake one: `terminate(signal)` of `capture()` / `testContext()`).
+   * Returns the function that unsubscribes it.
+   */
+  onTerminate(callback: (signal: 'SIGTERM' | 'SIGHUP' | 'SIGINT') => void): () => void;
 };
 
 /** Everything a command may reach for. */
@@ -2249,7 +2274,7 @@ export interface Proc {
   cmdline(pid: number): Uint8Array | null;
   memAvailableMb(): number | null;
 }
-export interface RunOptions { cwd?: string; input?: string; timeoutMs?: number; env?: Readonly<Record<string, string>> }
+export interface RunOptions { cwd?: string; input?: string; timeoutMs?: number; env?: Readonly<Record<string, string>>; signal?: AbortSignal /* task 19 */ }
 export interface RunResult { code: number | null; stdout: string; stderr: string; timedOut: boolean; notFound: boolean }
 export interface Runner {
   run(command: string, args: readonly string[], options?: RunOptions): Promise<RunResult>;
@@ -3493,8 +3518,8 @@ export const GH_TIMEOUT_MS = 10_000;
 export function prsDue(prs: readonly PrRow[], nowNs: Ns, refreshMinutes: number, force: boolean): PrRow[];
 export function batchArgs(keys: readonly PrKey[]): string[];
 export function parseBatch(keys: readonly PrKey[], result: RunResult, atNs: Ns): Map<string, PrFetchResult>;
-export function fetchPrs(deps: { runner: Runner; clock: Clock; store: Store; env: Env }, urls: readonly string[]): Promise<{ fetched: number; failed: number }>;
-export function refreshPrs(deps: { runner: Runner; clock: Clock; store: Store; env: Env }, options: { force: boolean; refreshMinutes: number }): Promise<{ fetched: number; failed: number }>;
+export function fetchPrs(deps: { runner: Runner; clock: Clock; store: Store; env: Env }, urls: readonly string[], options?: { signal?: AbortSignal } /* task 19 */): Promise<{ fetched: number; failed: number }>;
+export function refreshPrs(deps: { runner: Runner; clock: Clock; store: Store; env: Env }, options: { force: boolean; refreshMinutes: number; sessionIds?: readonly string[] /* task 14 */; signal?: AbortSignal /* task 19 */ }): Promise<{ fetched: number; failed: number }>;
 export const CHIP_ORDER: readonly ['cant-read', 'unfetched', 'checks-failing', 'changes-requested', 'checks-pending', 'review-required', 'draft', 'approved-green', 'merged', 'closed'];
 export type ChipLevel = (typeof CHIP_ORDER)[number];
 export function prLevel(pr: PrRow): ChipLevel;
@@ -4621,8 +4646,14 @@ export const command: Command;
 - Create: `src/cli/tui/keys.ts`, `src/cli/tui/run.ts`
 - Modify: `src/cli/main.ts` — in `dispatch`, an empty `argv` runs `runInteractiveList(ctx)` when
   `ctx.io.isTTY.stdin && ctx.io.isTTY.stdout`, else the `ls` command with `[]` (loaded like any
-  command); both go through the same error mapping as `command.run` (task 12); `--help` keeps
-  printing the usage
+  command: when it cannot be found the installation is broken, and it fails as an unknown command
+  does, usage on stderr and exit 2); both go through the same error mapping as `command.run` (task
+  12); `--help` keeps printing the usage
+- Modify (ruled by the plan owner): `src/platform/types.ts`, `src/platform/real.ts` (`RunOptions.signal`, 2.2),
+  `src/github.ts` (`signal` of `fetchPrs` / `refreshPrs`, 2.6), `src/cli/context.ts` (`Io.onResize`,
+  `Io.onTerminate`, 2.9.1), and the test helpers `test/helpers/platform.ts` (the fake runner honours the signal),
+  `test/helpers/capture.ts` and `test/helpers/context.ts` (`resize(size)` triggers `onResize`, `terminate(signal)`
+  triggers `onTerminate`, `openKeys()` counts the key readers not given back)
 - Modify: `test/cli/main.test.ts` — delete the test "bare skydeck prints the usage and exits 0
   until the interactive list exists" (it uses `testContext()` without `t`, which cannot open a
   deck); the routing is tested in `test/cli/main-routing.test.ts`
@@ -4638,24 +4669,54 @@ export function decodeKeys(chunk: string): string[];
 export function runInteractiveList(ctx: Context): Promise<number>;
 ```
 
-**Behaviour fixed here.** On start: `loadRows` → `initModel` → write `\x1b[?1049h\x1b[?25l` and
-the first frame (`\x1b[H\x1b[2J` + `render(...).join('\r\n')`), then start a background
-`refreshPrs` (`{ force: false, refreshMinutes }`; deps include `env: ctx.platform.env`, 2.6); when it settles, `loadRows` and
-`withRows(…, reorder false)` and repaint. For every chunk from `io.keys()`: `decodeKeys`, then
-`reduce` per key, run the effect, repaint. Effects: `label`/`group` → `cleanLabel`/`cleanGroup`
-(empty text clears) + `setLabel`/`setGroup`, `withMessage('saved')` or the error message;
-`note` → leave the alternate screen, `editNote(ctx, deck, id)` (task 15), re-enter;
-`done` → `markDone`/`markUndone`; `pr-add`/`pr-rm` → `attachManualPr`/`detachSessionPr`; any of
-these then `loadRows` + `withRows(reorder false)`. `resume` → `prepareResumeById(deck, row.id)` (it
-refreshes and loads the rows by itself: the guard works on fresh state, design 7.6); with a tab adapter
-`launchPrepared(deck, p, 'tab')` and stay, message `opened <short> in a new tab` (or its returned
-lines, warnings included, when there are any); without one, leave the screen and
-`launchPrepared(deck, p, 'here')`, print its lines on stderr, then return its code. A
-`ResumeRefusedError`, or a `RefError` (the session is gone), becomes the message. `refresh` → `refreshWithProgress(ctx, deck)`, then an explicit
-`refreshPrs` (`{ force: true, refreshMinutes }`, deps with `env`; design 7.3: the refresh key asks about every pull request that the sessions the list lists have attached
-and that is not merged or closed — `sessionIds`: the listed rows; a failure is saved on the pull request) + `loadRows` + `withRows(reorder true)`. `quit` or the end of `io.keys()` → write `\x1b[?25h\x1b[?1049l`,
-call `return()` on the key iterator, return 0. Errors from an effect never leave the terminal in
-the alternate screen.
+**Behaviour fixed here.** On start: `loadRows` → `initModel` → take `io.keys()` (raw mode is on before anything is
+painted, so nothing typed early is echoed into the frame), subscribe to `io.onResize` and `io.onTerminate`, write
+`\x1b[?1049h\x1b[?25l\x1b[?7l` (alternate screen, cursor hidden, autowrap off: a row wider than the terminal — wide
+characters take two cells, `clip` counts one — is cut by the terminal instead of scrolling the frame) and the first
+frame (`\x1b[H\x1b[2J` + `render(...).join('\r\n')`), then start a background `refreshPrs` (`{ force: false,
+refreshMinutes, signal }`; deps include `env: ctx.platform.env`, 2.6); when it settles having fetched or failed
+something, `loadRows` and `withRows(…, reorder false)` and repaint (nothing when it saved nothing; a rejection becomes
+the message, it never rejects). For every chunk from `io.keys()`: `decodeKeys`, then `reduce` per key, run the
+effect, repaint. Every model goes through `scrolled(model, size)`: after every key, every `withRows`, and every
+resize (`io.onResize`, which also repaints at once). Nothing is painted while the alternate screen is left.
+
+Effects: `label`/`group` → `cleanLabel`/`cleanGroup` (empty text clears) + `setLabel`/`setGroup`; `note` → leave the
+alternate screen, stop reading keys (`return()` on the key iterator gives the terminal its mode back),
+`editNote(ctx, deck, id)` (task 15) with its stderr line captured, a new `io.keys()`, re-enter; `done` →
+`markDone`/`markUndone`; `pr-add`/`pr-rm` → `attachManualPr`/`detachSessionPr`, and after `pr-add` a background
+`fetchPrs([url], { signal })` of the pull request just attached (as `pr add` fetches it at once, design 7.3); any of
+these then `loadRows` + `withRows(reorder false)`. The message after them: `saved` after a label, group, note or
+pull-request change (none after `done`), or the message of the `SkydeckError` the effect threw — every
+`SkydeckError` of any effect is the message; any other error ends the list through the error mapping.
+
+The message line puts the outcome first, then the context, so that what matters survives at 80 columns: after a
+note, the outcome (`saved` or the error) and then `editNote`'s line; after a tab launch, `opened <short> in a new tab`
+and then its warnings. Lines shown in the message line lose their `skydeck: ` prefix and are joined by two spaces.
+
+`resume` → `prepareResumeById(deck, row.id)` (it refreshes and loads the rows by itself: the guard works on fresh
+state, design 7.6), then `loadRows` + `withRows(reorder false)`. With a tab adapter `launchPrepared(deck, p, 'tab')`
+and stay; when it fails, its lines (the reason, the command to run or what to do instead) are kept and printed on
+stderr when the list ends, in the scrollback, and the message reads `opening <short> in a new tab failed; the
+details are printed when the list ends` followed by the lines. Without a tab adapter: give the terminal back (below),
+`launchPrepared(deck, p, 'here')`, print its lines on stderr, then return its code. A `ResumeRefusedError`, or a
+`RefError` (the session is gone), becomes the message.
+
+`refresh` → `refreshWithProgress(ctx, deck)` + `loadRows` + `withRows(reorder true)` at once, message `refreshing
+pull requests…`, then an explicit `refreshPrs` in the background (`{ force: true, refreshMinutes, sessionIds, signal
+}`, deps with `env`; design 7.3: the refresh key asks about every pull request that the sessions the list shows have
+attached and that is not merged or closed — `sessionIds`: the visible rows after that reload; a failure is saved on
+the pull request); keys are read meanwhile, and a further `r` while it runs refreshes the deck and the order but
+starts no second fetch (the message says one is running); when it settles, `loadRows` + `withRows(reorder false)`
+when it saved something, the message taken away, repaint.
+
+Giving the terminal back — on `quit`, the end of `io.keys()`, a `--here` resume, an error, SIGTERM, SIGHUP or an
+outside SIGINT: abort
+the fetches (one `AbortController` for all: an aborted fetch ends at once and saves nothing), write
+`\x1b[?7h\x1b[?25h\x1b[?1049l` (autowrap, cursor, normal screen), call `return()` on the key iterator, print the
+lines kept for the end on stderr; then (except for a signal, after which the process ends) unsubscribe and return —
+0 for `quit` — never waiting for `gh`. Errors from an effect never leave the terminal in the alternate screen. (The
+parts beyond the first version of this paragraph were ruled by the plan owner after reviews 1 and 2 of pull request
+#24.)
 
 **Test cases**
 
@@ -4666,7 +4727,7 @@ the alternate screen.
 'jk'             → ['j','k']
 '\x1b[A\x1b[B'   → ['up','down']
 '\x1bOA'         → ['up']
-'\r' / '\n'      → ['enter']
+'\r' / '\n'      → ['enter']     ('\r\n', as a paste brings it, is one enter: ruled by the plan owner)
 '\x7f' / '\b'    → ['backspace']
 '\x03'           → ['ctrl-c']
 '\x1b'           → ['escape']
@@ -4678,7 +4739,7 @@ the alternate screen.
 0. `main-routing.test.ts` (`testDeck`): `main([], ctx)` with both TTY flags and keys `['q']` → the list (stdout starts with
    `'\x1b[?1049h'`); with `stdoutTTY` false → exactly what `main(['ls'], ctx)` prints, no escape sequences; with both TTY flags and
    `config.json` `{"colour":1}` → `EXIT.failure` and `skydeck: …colour…` on stderr (error mapping, no stack trace).
-1. Keys `['q']` → exit 0; stdout starts with `'\x1b[?1049h'`, ends with `'\x1b[?1049l'`; contains a frame with both short ids.
+1. Keys `['q']` → exit 0; stdout starts with `'\x1b[?1049h'`, ends with `'\x1b[?1049l'`; contains a frame with both short ids; no key reader is left open.
 2. `['d','q']` → `meta(<first row>).doneAtNs` set; the next frame no longer shows that row.
 3. `['l','a','b','\r','q']` on a row without a label → label `'ab'`; a frame shows `saved`.
 4. `['l','\x7f'×n,'-','x','\r','q']` → label unchanged; a frame shows the `UsageError` message.
@@ -4690,6 +4751,18 @@ the alternate screen.
    and the row order of the first frame is unchanged.
 10. `[() => { <write a start spool file for S3>; return 'r'; }, 'q']` → after `r` the file is ingested and S3 appears in a later frame.
     A PR read a minute ago (`okAtNs`, `triedAtNs` T0−1m, 5 minutes) is asked about again by `r` (one more `gh` call), not by the background refresh.
+11. (Ruled by the plan owner.) `q` while a fetch is hanging (a fake `gh` that answers only when aborted) returns at once and no
+    pull-request row is written afterwards; the same for an `R` that hands the terminal to `claude`, and for a `q` while the
+    fetch of `r` hangs (keys are read meanwhile). A resize (`resize(size)` of the fake `Io`) is painted at once at the new
+    size, and nothing after the list has ended.
+12. (Ruled by the plan owner after review 2.) No key reader is open after `q`, ctrl-c, an error, while the editor runs and
+    when the handoff is written; a fetch that ends while the editor runs paints nothing over it; `r` computes the order
+    again; `r` while its fetch runs starts no second one; `p` fetches what it attached; a failed tab launch shows the outcome
+    first at 80 columns and prints its lines on stderr when the list ends; after a failed note edit the message starts with
+    the outcome; SIGTERM, SIGHUP and SIGINT give the terminal back (screen, autowrap, cursor, keys) and abort the fetches.
+    (After the re-check of review 2.) A second `r` after the first fetch finished fetches again and the message goes away;
+    `r` while a fetch runs still re-reads and reorders; `q` while the fetch of `p` hangs returns at once; a failed
+    background fetch is shown in the message line.
 
 **Steps**
 - [ ] Write both test files; replace the bare-`skydeck` test in `test/cli/main.test.ts`. `npm test` → fails.
