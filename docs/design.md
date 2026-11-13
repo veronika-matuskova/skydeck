@@ -344,12 +344,21 @@ never received a prompt has no transcript (14).
   pull requests per query, with a 10 second timeout. Per pull request it stores state (`open`,
   `draft`, `merged`, `closed`), review decision, the combined checks result, the time of the last
   successful fetch and the time and error of the last attempt.
-- Merged and closed pull requests are never fetched again. Open ones are refreshed when their
-  last successful fetch is older than `prRefreshMinutes` (default 5). A pull request that no
-  session has attached any more (every attachment detached) is not refreshed, `pr refresh` included.
-- `skydeck ls` and `show` print the cached status and never wait for the network. The
-  interactive list paints from the cache, refreshes in the background and repaints.
-  `skydeck pr refresh` fetches now.
+- Merged and closed pull requests are never fetched again. A pull request that no session has
+  attached any more (every attachment detached) is not refreshed either, an explicit refresh
+  included. The others are refreshed by two rules. An **automatic** refresh (the interactive list
+  when it opens, and in the background) fetches one that was never tried, or whose last
+  *attempt* is older than `prRefreshMinutes` (default 5) — the last attempt, not the last
+  success, so a pull request that keeps failing is asked about at that pace and not at every
+  refresh. An **explicit** refresh — `skydeck pr refresh`, `ls --refresh`, `show --refresh` and the
+  list's refresh key — fetches every such pull request of the sessions it is about, whatever its
+  age and its last result: `ls` and the list those they show (so with `--all` or `a`, the done
+  ones too), `show` that session, `pr refresh` all attached ones.
+- `skydeck ls` and `show` print the cached status and never touch the network, unless they are
+  given `--refresh`: then they first make an explicit refresh (`ls`: of the sessions it prints,
+  `show`: of that session), with the timeout above, and a fetch that fails leaves the pull
+  request "can't read" and the command still succeeds. The interactive list paints from the
+  cache, refreshes in the background and repaints. `skydeck pr refresh` fetches now.
 - A pull request that cannot be read is shown as "can't read" with the time of its last
   successful fetch — never as closed.
 - A pull request that has never been fetched and has no failed attempt is shown as "not
@@ -386,8 +395,8 @@ The interactive list is built as two pure functions — `reduce(model, key)` and
 | Command | Effect |
 |---|---|
 | `skydeck` | Interactive list. |
-| `skydeck ls [--all] [--json]` | Print the list. |
-| `skydeck show <ref> [--json]` | One session: state, marks, project directory, launch command, links, note, pull requests, holders. |
+| `skydeck ls [--all] [--json] [--refresh]` | Print the list. `--refresh` first fetches the pull requests of the sessions it prints that are not merged or closed (7.3). |
+| `skydeck show <ref> [--json] [--refresh]` | One session: state, marks, project directory, launch command (and the flags in it that skydeck does not know, which a resume does not pass on), links, note, whether it is done and since when, pull requests, holders. `--refresh` as for `ls`, for this session's pull requests. |
 | `skydeck label <ref> [<text>]` / `group <ref> [<text>]` | Set; without text (or with an empty text), clear. The text is all the arguments after `<ref>`, joined by one space. |
 | `skydeck note <ref> [--set <text>]` | Edit in `$VISUAL` / `$EDITOR` (7.1), or set directly. |
 | `skydeck done <ref>` / `undone <ref>` | Hide / show. |
@@ -418,8 +427,13 @@ found or ambiguous; 4 resume refused; 5 restore stopped before finishing.
                              "review": null, "checks": null, "okAt": null, "error": null } ] } ] }
 ```
 
-Times are UTC ISO 8601 with milliseconds. Sessions are in list order. `show --json` prints one
-session object with `note`, `launch` (argument list or null), `links` and `holders` added.
+Times are UTC ISO 8601 with milliseconds. Sessions are in list order. A pull request's `state`,
+`review`, `checks` and `okAt` are null until it has been fetched. `show --json` prints one
+session object with `doneAt` (the time it was marked done while it is done, else null), `note`,
+`launch` (argument list or null), `unknownFlags` (the names of the flags in `launch` that skydeck
+does not know; `[]` without a launch command), `links` and `holders` added. The text of `show` prints a note sanitised line by line (7.4); the
+JSON of `show` holds the note as stored, with the characters a terminal would act on written as `\uXXXX`
+escapes, so that it is safe to print and still parses back to the exact text.
 
 ### 7.6 Resume
 

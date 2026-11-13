@@ -133,7 +133,7 @@ Each is binding for the implementer. The last column names the task that records
 | D8 | A transcript's session id is its file name (the UUID). | 5.6 "per file: the session id". | — |
 | D9 | Shared error classes (with their exit codes) live in `src/platform/errors.ts`. | `platform` is the one module everybody may import. | — |
 | D10 | Field-22 parsing and `cmdline` decoding live in `src/claude/procstat.ts`; the path-flag rewrite lives in `src/claude/launch.ts`. Files inside `src/claude/` may import each other. | 5.3 and 5.5 both need field 22; 5.3 needs the flag shapes. | — |
-| D11 | A pull request never fetched, with no failed attempt, is its own level `unfetched`, shown as "not fetched", ranked directly after `cant-read`. `skydeck pr add` fetches the pull request it attaches at once (same timeout; a failure leaves it `cant-read`). `skydeck ls` and `show` take `--refresh`, which fetches stale and unfetched pull requests before printing; without it they never touch the network. | 7.3 has no level for it; a fresh attachment should not look broken. | 9 (7.3: the level), 15 (7.3: `pr add`), 14 (7.3, 7.5: `--refresh`) |
+| D11 | A pull request never fetched, with no failed attempt, is its own level `unfetched`, shown as "not fetched", ranked directly after `cant-read`. `skydeck pr add` fetches the pull request it attaches at once (same timeout; a failure leaves it `cant-read`). `skydeck ls` and `show` take `--refresh`, which makes an explicit refresh before printing (see 2.6: every pull request that the sessions the command is about have attached and that is not merged or closed, whatever its age and its last result: `ls` those it prints, so with `--all` all of them, `show` that session's; `pr refresh` all attached ones); without it they never touch the network. An automatic refresh fetches a pull request only when it was never tried or its last attempt (not its last success) is older than `prRefreshMinutes`. | 7.3 has no level for it; a fresh attachment should not look broken. | 9 (7.3: the level), 15 (7.3: `pr add`), 14 (7.3, 7.5: `--refresh`) |
 | D12 | The fallback title is `YYYY-MM-DD HH:MM <basename of dir>` in UTC (`?` when there is no dir). | Deterministic tests. | 11 (7.1) |
 | D13 | `Context` gains `platform`; `Io` gains `isTTY`, `size`, `readLine`, `keys` (task 1, once). Commands open the database through `withDeck` (task 12). | Brief 18: the platform task extends `Context` once. | — |
 | D14 | `$VISUAL`, else `$EDITOR`, else `vi`; the value is split on spaces; the note file path is appended. | 7.1 only says `$EDITOR`. | 15 (7.1) |
@@ -1292,7 +1292,11 @@ export function prKey(text: string): PrKey | null;
 export const BATCH_SIZE = 50;
 export const GH_TIMEOUT_MS = 10_000;
 
-/** Non-final (state not merged/closed) rows whose okAtNs is null or older than refreshMinutes; all non-final rows when force. */
+/**
+ * AUTOMATIC (`force` false): non-final (state not merged/closed) rows that were never tried (triedAtNs null) or whose
+ * last ATTEMPT is older than refreshMinutes — the last attempt, not the last success, so a row that keeps failing is
+ * asked about at that pace. EXPLICIT (`force`): every non-final row, whatever its age and its last result.
+ */
 export function prsDue(prs: readonly PrRow[], nowNs: Ns, refreshMinutes: number, force: boolean): PrRow[];
 
 /**
@@ -1351,10 +1355,13 @@ export function fetchPrs(
  * fetchPrs of the urls of prsDue(rows, now, refreshMinutes, force), where `rows` are the store's
  * pull requests that at least one session still has attached (a row whose every attachment is
  * detached, or that was never attached, is shown nowhere and is not asked about; ruled by the plan owner).
+ * `force: true` is the user's explicit refresh (`pr refresh`, `ls --refresh`, `show --refresh`, the list's refresh key),
+ * `force: false` the automatic one (the list when it opens and in the background). With `sessionIds`, only the
+ * pull requests that one of those sessions has attached count: the sessions the command is about.
  */
 export function refreshPrs(
   deps: { runner: Runner; clock: Clock; store: Store; env: Env },
-  options: { force: boolean; refreshMinutes: number },
+  options: { force: boolean; refreshMinutes: number; sessionIds?: readonly string[] },
 ): Promise<{ fetched: number; failed: number }>;
 
 /** 7.3 chip, worst first. */
@@ -1865,10 +1872,12 @@ export function formatRow(row: ListRow, nowNs: Ns, width: number): string;
 /** "<count>pr:<level>", e.g. "2pr:checks-failing". */
 export function formatChip(chip: { level: ChipLevel; count: number }): string;
 /**
- * One pull request on one line (design 7.3: never "closed" when unreadable):
- * level cant-read → "<url>  can't read, last read <isoFromNs(okAtNs) or 'never'>" plus " (<error>)"
- * when error is set; level unfetched → "<url>  not fetched" (D11); otherwise "<url>  <level>".
+ * The status of one pull request as a line prints it after the url (design 7.3: never "closed" when unreadable):
+ * level cant-read → "can't read, last read <isoFromNs(okAtNs) or 'never'>" plus " (<error>)"
+ * when error is set; level unfetched → "not fetched" (D11); otherwise the level. (Task 14 split it out of formatPrLine.)
  */
+export function formatPrStatus(pr: PrView): string;
+/** One pull request on one line: "<url>  <formatPrStatus(pr)>". */
 export function formatPrLine(pr: PrView): string;
 
 // src/cli/output.ts (task 14)
@@ -2091,13 +2100,15 @@ export interface ListJson { version: 1; generatedAt: string; sessions: SessionJs
 export interface LinkJson { kind: LinkKind; from: string; to: string; at: string }
 export interface HolderJson { pid: number; bootId: string; procStart: number | null; since: string }
 export interface ShowJson extends SessionJson {
-  note: string | null; launch: string[] | null; unknownFlags: string[]; links: LinkJson[]; holders: HolderJson[];
+  doneAt: string | null; note: string | null; launch: string[] | null; unknownFlags: string[]; links: LinkJson[]; holders: HolderJson[];
 }
 ```
 
 Times are `isoFromNs`. `dir` is `""` when unknown. `sessions` is in list order (groups in order,
-rows in order). Output is `JSON.stringify(value, null, 2) + "\n"`. `show --json` adds, after
-`prs`: `note`, `launch` (`session.launch`), `unknownFlags` (`unknownFlags(session.launch)`, `[]` when
+rows in order). Output is `JSON.stringify(value, null, 2) + "\n"`, written by `jsonText`
+(`src/cli/json.ts`), which also writes DEL, the C1 controls and the bidirectional controls as
+`\uXXXX` escapes (the same value for `JSON.parse`, safe on a terminal). `show --json` adds, after
+`prs`: `doneAt` (`isoFromNs(session.doneAtNs)` while the session is done, else `null`), `note`, `launch` (`session.launch`), `unknownFlags` (`unknownFlags(session.launch)`, `[]` when
 there is no launch command), `links` (every link from or to the session, by
 time), `holders` (live holders). Version 1 is stable: later changes only add keys.
 
@@ -3385,9 +3396,11 @@ export function chipFor(prs: readonly PrRow[]): { level: ChipLevel; count: numbe
 
 **Test cases** (`pr(over)` builds a `PrRow` for `https://github.com/o/r/pull/1`, everything else null)
 
-`prsDue` (now `T0`, 5 minutes): `merged` and `closed` rows → never; `open` with `okAtNs T0−10m` → due;
-`open` with `okAtNs T0−1m` → not due; `draft` with `okAtNs null` → due; `state null, error 'x'` → due;
-`force` → every non-final row.
+`prsDue` (now `T0`, 5 minutes; the last attempt `triedAtNs` counts, not `okAtNs`): `merged` and `closed` rows → never,
+`force` or not; `open` tried `T0−10m` → due; `open` tried `T0−1m` → not due; `triedAtNs null` (`open`, `draft`, `state null`) → due;
+`state null, error 'x'`, `okAtNs null`, tried `T0−1m` → not due, tried `T0−6m` → due (a row that keeps failing is asked about at the pace of the
+refresh age); `okAtNs T0−20m`, tried `T0−1m`, error → not due (the last attempt counts); `okAtNs T0−2m`, error, tried `T0−1m` → not due, tried
+`T0−6m` → due; `force` → every non-final row, whatever its age and its last result.
 
 `batchArgs([o/r#1, a/b#22])` → starts with `['api','graphql','--hostname','github.com','-f']`, then `'query=' + q`, then exactly
 `['-f','o0=o','-f','r0=r','-F','n0=1','-f','o1=a','-f','r1=b','-F','n1=22']`; `q` contains
@@ -3410,7 +3423,9 @@ export function chipFor(prs: readonly PrRow[]): { level: ChipLevel; count: numbe
 `refreshPrs` (store in a temp dir, `fakeRunner`, `fakeClock(T0)`, `refreshMinutes 5`)
 - 120 due rows → 3 `gh` calls with 50, 50 and 20 aliases, each with `{ timeoutMs: 10000, env }` (`env`: see the environment case below); returns `{ fetched: 120, failed: 0 }`; rows have `okAtNs T0`.
 - A batch answered `timedOut` → its rows keep their previous `state`, get `error 'gh timed out after 10 s'`, `triedAtNs T0`; `failed` counts them; no throw.
-- `merged` rows are never sent; a non-due `open` row is not sent unless `force`.
+- `merged` rows are never sent; a non-due `open` row is not sent unless `force`. A row whose fetch keeps timing out is asked about
+  again only after the refresh age (fake clock: +4 min no call, +6 min a call); `force` asks about a row that failed a minute ago and one
+  read a minute ago. With `sessionIds` only the pull requests attached to those sessions are asked about (a detached attachment does not count; `[]` → no call).
 - No due rows → no `gh` call.
 - `fetchPrs(deps, [url1])` with a non-due open row → one `gh` call with one alias, the row updated; `fetchPrs(deps, [])` → no call.
 - `fetchPrs(deps, [mergedUrl])` → no call, the row unchanged (`pr add` of a merged pull request while `gh` fails). Two overlapping refreshes of one open row, the slow one failing or answering `OPEN` after the fast one saved `MERGED` → the row stays `merged`, no error; `{ fetched: 0, failed: 0 }` for the slow one.
@@ -3863,6 +3878,7 @@ drops groups left empty. Groups are ranked by the members listed under the curre
   width 122 → everything; 110 → title cut to 24, everything else shown; 109 → no `note`; 103 → also no time in state;
   97 → marks `ended-unexpectedly+1`; 87 → chip `pr:checks-failing`; 60 → `'waiting     a…  ended-unexpectedly+1  pr:checks-failing  0b5f3c1e'`.
 - `formatChip({ level: 'merged', count: 1 })` → `'1pr:merged'`.
+- `formatPrStatus`: the level, `'not fetched'`, `"can't read, last read <iso or never>[ (<error>)]"`; `formatPrLine` = url, two spaces, `formatPrStatus`.
 - `formatPrLine`: level `draft` → `'https://github.com/o/r/pull/1  draft'`; level `cant-read`, `okAtNs T0`, error `'HTTP 401'` →
   `"https://github.com/o/r/pull/1  can't read, last read 2026-11-12T09:00:00.000Z (HTTP 401)"`; `cant-read`, `okAtNs null`, error `'x'` →
   `"https://github.com/o/r/pull/1  can't read, last read never (x)"`; level `unfetched` → `'https://github.com/o/r/pull/1  not fetched'`.
@@ -3913,7 +3929,10 @@ drops groups left empty. Groups are ranked by the members listed under the curre
 
 **Files**
 - Create: `src/cli/output.ts`
+- Create: `src/cli/json.ts` (`jsonText(value): string`: `JSON.stringify(value, null, 2)` and a newline, with DEL, the C1 controls and the bidirectional controls written as `\uXXXX` escapes — the one place JSON is turned into text for the terminal; `JSON.parse` of its result is the exact value). Test: `test/cli/json.test.ts`
 - Create: `src/cli/commands/ls.ts`, `src/cli/commands/show.ts` (each `export const command: Command`)
+- Modify: `src/cli/commands/pr.ts` (its private `statusOf` is gone: it prints `formatPrStatus`, the status part of `formatPrLine`, now exported from `src/cli/row.ts`; its tests are unchanged)
+- Modify: `src/cli/row.ts` (`formatPrStatus`), `src/sessions/list.ts` (`SHORT_ID_LENGTH` exported, used by `output.ts`), `src/github.ts` (`prsDue`: the automatic rule keys on the last attempt, 2.6) with `test/github.test.ts` and `test/cli/row.test.ts`
 - Create fixtures: `test/fixtures/day/` — `spool/*.ev`, `claude/projects/<folder>/<uuid>.jsonl`,
   `claude/sessions/*.json`, `proc.json` (the fake `/proc`: boot id, processes), `expected-ls.json`
 - Modify: `docs/design.md` 7.3 (`ls`/`show` print the cached status unless `--refresh`) and the `ls`/`show` rows of 7.5 (D11)
@@ -3935,7 +3954,7 @@ export interface SessionJson {
 export interface ListJson { version: 1; generatedAt: string; sessions: SessionJson[] }
 export interface LinkJson { kind: LinkKind; from: string; to: string; at: string }
 export interface HolderJson { pid: number; bootId: string; procStart: number | null; since: string }
-export interface ShowJson extends SessionJson { note: string | null; launch: string[] | null; unknownFlags: string[]; links: LinkJson[]; holders: HolderJson[] }
+export interface ShowJson extends SessionJson { doneAt: string | null; note: string | null; launch: string[] | null; unknownFlags: string[]; links: LinkJson[]; holders: HolderJson[] }
 export function sessionJson(row: ListRow): SessionJson;
 export function listJson(model: ListModel): ListJson;
 export function showJson(row: ListRow, links: readonly LinkRow[]): ShowJson;
@@ -3947,20 +3966,29 @@ export const command: Command;
 export const command: Command;
 ```
 
-**`--refresh` (D11).** Without it `ls` and `show` never touch the network. With it, before printing:
-`ls` runs `refreshPrs({ runner, clock, store, env: ctx.platform.env }, { force: false, refreshMinutes: config.prRefreshMinutes })` (`env` is required in the deps of every `fetchPrs`/`refreshPrs` call, 2.6);
-`show` runs `fetchPrs` (same deps, with `env`) on the urls of `prsDue` restricted to that session's attached pull requests.
+**`--refresh` (D11).** Without it `ls` and `show` never touch the network. With it they make an explicit refresh before printing
+(every attached pull request that is not merged or closed, whatever its age and its last result):
+`ls` runs `refreshPrs({ runner, clock, store, env: ctx.platform.env }, { force: true, refreshMinutes: config.prRefreshMinutes, sessionIds: <the ids of the rows it prints> })` (`env` is required in the deps of every `fetchPrs`/`refreshPrs` call, 2.6) and builds the list again; a done session's pull requests are fetched only with `--all`;
+`show` runs the same `refreshPrs` (same deps, with `env`) with `sessionIds: [<its id>]` and reads the row again.
 
 **Formats (contract).** `formatList`: per group a line with its name (`no group` for null), then
 each row as `'  ' + formatRow(row, nowNs, width − 2)`; one empty line between groups; `'no sessions\n'`
 when there are none; ends with `\n`. `ls` uses `io.size().columns`. `formatShow`: the title, then
 one line per field with the label padded to 11 characters: `id:`, `state:` (`<state>[ (<stateDetail>)] since <iso>`),
+`done:` (only for a session that is done: `since <iso>` of the time it was marked, `yes` when that is not known; the JSON has `doneAt` for it),
 `marks:`, `label:`, `group:`, `dir:` (`-` for null/empty), `launch:` (`shellJoin(launch)` or `unknown`),
 `unknown:` (only when `unknownFlags(launch)` is not empty: the names, sanitised, joined by one space — the flags
-skydeck does not know, which a resume does not pass on), `continues:` (only when `continuedFrom`), `link:` per link (`<kind> <fromShort> -> <toShort> at <iso>`),
+skydeck does not know, which a resume does not pass on), `continues:` (only when `continuedFrom`: the full id), `link:` per link (`<kind> <fromShort> -> <toShort> at <iso>`),
 `holder:` per holder (`pid <pid> since <iso>`), `pr:` per PR (`formatPrLine(pr)`, then
 ` review <r>` and ` checks <c>` when set and the level is not `cant-read`), then `note:` and the note
-lines indented by two spaces when there is a note.
+lines indented by two spaces when there is a note. Details the lines above leave open: `marks:` joins
+the marks with a comma, and `marks:`, `label:` and `group:` show `-` when there is nothing; the words
+of `launch:` are sanitised before they are quoted, and an empty launch command (`[]`) reads `unknown`
+like none; the note loses its trailing whitespace (so a note saved with a final line break has no empty
+line after it), each of its lines is sanitised (line breaks kept) and an empty line inside the note stays empty (lines that are nothing once sanitised are dropped at its start and end, and a note of nothing else gets no `note:` line); the
+text always ends with `\n`.
+`nowNs` is part of the signature and is not used (`since` is an ISO time, not an age). `show --json`
+and `ls --json` are written by `jsonText`; the JSON holds the note and the launch command as stored.
 
 **Test cases**
 
@@ -3985,9 +4013,10 @@ lines indented by two spaces when there is a note.
 - `show --help` → 0; `show` → 2 (missing `<ref>`); `show nope1234` → 3; `show <S1 prefix>` → 0 with `formatShow`;
   `show <S1> --json` → parses, `id` S1.
 - S1 with one never-fetched PR and one open PR fetched 1 minute ago; S2 with a never-fetched PR. `ls` and `show 0b5f`
-  without `--refresh` → `runner.calls` empty. `ls --refresh` with gh answering both unfetched PRs `open` → one `gh` call
-  (the fresh one is not sent); `ls --json` then shows both `state 'open'`. `show 0b5f --refresh` → one `gh` call with only
-  S1's unfetched PR. gh `timedOut` → exit 0, the PR shows `can't read`.
+  without `--refresh` → `runner.calls` empty. `ls --refresh` with gh answering the pull requests `open` → one `gh` call with all
+  three (the fresh one too); `ls --json` then shows every PR `state 'open'`. `show 0b5f --refresh` → one `gh` call with S1's two
+  PRs and not S2's. With S2 marked done, `ls --refresh` asks about S1's PRs only, `ls --all --refresh` about all three. A PR read 2 minutes ago whose later fetch failed 1 minute ago is asked about by `ls --refresh` and by
+  `show --refresh` (one call each). Merged and closed PRs are never asked about (no call). gh `timedOut` → exit 0, the PR shows `can't read`.
 
 `day.test.ts` — the recorded day. Copy `test/fixtures/day/` into a `testDeck` (spool into `spoolDir`,
 `claude/` into `claudeHome`, every copied file's mtime set to 09:04 with `fs.utimesSync`),
@@ -4446,8 +4475,9 @@ guard works on fresh state, design 7.6) → `prepareResume` on the fresh row; wi
 `launchPrepared(deck, p, 'tab')` and stay, message `opened <short> in a new tab` (or its returned
 lines, warnings included, when there are any); without one, leave the screen and
 `launchPrepared(deck, p, 'here')`, print its lines on stderr, then return its code. A
-`ResumeRefusedError` becomes the message. `refresh` → `refreshWithProgress(ctx, deck)` + `loadRows` +
-`withRows(reorder true)`. `quit` or the end of `io.keys()` → write `\x1b[?25h\x1b[?1049l`,
+`ResumeRefusedError` becomes the message. `refresh` → `refreshWithProgress(ctx, deck)`, then an explicit
+`refreshPrs` (`{ force: true, refreshMinutes }`, deps with `env`; design 7.3: the refresh key asks about every pull request that the sessions the list lists have attached
+and that is not merged or closed — `sessionIds`: the listed rows; a failure is saved on the pull request) + `loadRows` + `withRows(reorder true)`. `quit` or the end of `io.keys()` → write `\x1b[?25h\x1b[?1049l`,
 call `return()` on the key iterator, return 0. Errors from an effect never leave the terminal in
 the alternate screen.
 
@@ -4483,6 +4513,7 @@ the alternate screen.
 9. Background refresh: a PR with `okAtNs null` and a fake gh answering it `open` → a later frame shows the chip of the new level,
    and the row order of the first frame is unchanged.
 10. `[() => { <write a start spool file for S3>; return 'r'; }, 'q']` → after `r` the file is ingested and S3 appears in a later frame.
+    A PR read a minute ago (`okAtNs`, `triedAtNs` T0−1m, 5 minutes) is asked about again by `r` (one more `gh` call), not by the background refresh.
 
 **Steps**
 - [ ] Write both test files; replace the bare-`skydeck` test in `test/cli/main.test.ts`. `npm test` → fails.
