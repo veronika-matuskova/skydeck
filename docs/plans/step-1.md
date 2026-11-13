@@ -1279,8 +1279,11 @@ export const GH_TIMEOUT_MS = 10_000;
 export function prsDue(prs: readonly PrRow[], nowNs: Ns, refreshMinutes: number, force: boolean): PrRow[];
 
 /**
- * The `gh` arguments for one batch (≤ BATCH_SIZE keys): ['api', 'graphql', '-f', 'query=<q>',
+ * The `gh` arguments for one batch (1 to BATCH_SIZE keys; RangeError for 0 or more):
+ * ['api', 'graphql', '--hostname', 'github.com', '-f', 'query=<q>',
  * then for i = 0..n-1: '-f', 'o<i>=<owner>', '-f', 'r<i>=<repo>', '-F', 'n<i>=<number>'].
+ * `--hostname github.com` makes `GH_HOST` or a configured enterprise host unable to send the
+ * question elsewhere.
  * Query: query($o0: String!, $r0: String!, $n0: Int!, …) { p0: repository(owner: $o0, name: $r0)
  * { pullRequest(number: $n0) { title state isDraft reviewDecision commits(last: 1) { nodes {
  * commit { statusCheckRollup { state } } } } } } … }. Values never appear inside the query text.
@@ -1290,29 +1293,46 @@ export function batchArgs(keys: readonly PrKey[]): string[];
 /**
  * Maps one `gh` result to a fetch result per key url.
  * - timedOut → every key: error "gh timed out after 10 s"; notFound → "gh is not installed".
- * - stdout not JSON with a `data` object → every key: first line of stderr, else "gh exited <code>".
+ * - stdout not JSON with a `data` object → every key: with exit code 0 "gh returned output skydeck
+ *   could not read" (stderr is not used: gh succeeded, and a line on it may concern one pull
+ *   request only); otherwise the first line of stderr that has text on it (trimmed), else
+ *   "gh exited <code>" ("gh was killed by a signal" when there is no code).
  * - otherwise per alias p<i>: pullRequest object → ok (state MERGED→merged, CLOSED→closed,
  *   OPEN+isDraft→draft, OPEN→open; reviewDecision APPROVED→approved, CHANGES_REQUESTED→
  *   changes-requested, REVIEW_REQUIRED→review-required, else null; rollup SUCCESS→passing,
- *   FAILURE|ERROR→failing, PENDING|EXPECTED→pending, else null); null or missing → error: the
- *   message of the `errors[]` entry whose path[0] is p<i>, else "not found".
+ *   FAILURE|ERROR→failing, PENDING|EXPECTED→pending, else null); a pullRequest object without a
+ *   string title, or whose state is none of those, → error "GitHub answered without a title" /
+ *   "GitHub answered with a pull request state not known here" (never a guess, never closed);
+ *   null or missing → error: the message of the `errors[]` entry whose path[0] is p<i>, else the
+ *   message of the first entry that has no path (GitHub's own timeout error), else "not found".
  * gh exits non-zero when some aliases fail; the per-alias data is still used.
  */
 export function parseBatch(keys: readonly PrKey[], result: RunResult, atNs: Ns): Map<string, PrFetchResult>;
 
 /**
- * Fetches exactly the given pull requests (urls of existing prs rows) in batches through
- * `gh api graphql` (runner, GH_TIMEOUT_MS), saves every result with store.savePrResult. Never
- * throws for gh failures; no call at all for an empty list.
+ * Fetches exactly the given pull requests (urls of existing prs rows; others are ignored, a
+ * repeated url counts once) in batches through `gh api graphql` (runner, GH_TIMEOUT_MS), one batch
+ * after the other, saves every result with store.savePrResult. Never throws for gh failures (a
+ * runner that rejects fails its batch: "gh could not be run: <first line of the message>"); no
+ * call at all for an empty list.
+ * A merged or closed row is never fetched (7.3): it is left out of the batches, and a result is
+ * dropped when its row has become merged or closed meanwhile (another refresh was faster); dropped
+ * results count neither as fetched nor as failed.
+ * `deps.env` (required) is the environment of the calling process (`platform.env`; this file may
+ * not read `process.env`, and the runner's `env` option is the child's complete environment): `gh`
+ * always runs with { timeoutMs: GH_TIMEOUT_MS, env } where env is that environment without GH_HOST,
+ * GH_FORCE_TTY and CLICOLOR_FORCE (the last beats NO_COLOR in `gh`) and with GH_PROMPT_DISABLED=1
+ * and NO_COLOR=1 (the rest is passed, so `gh` finds
+ * its login). Callers pass `env: ctx.platform.env`.
  */
 export function fetchPrs(
-  deps: { runner: Runner; clock: Clock; store: Store },
+  deps: { runner: Runner; clock: Clock; store: Store; env: Env },
   urls: readonly string[],
 ): Promise<{ fetched: number; failed: number }>;
 
 /** fetchPrs of the urls of prsDue(store.prs(), now, refreshMinutes, force). */
 export function refreshPrs(
-  deps: { runner: Runner; clock: Clock; store: Store },
+  deps: { runner: Runner; clock: Clock; store: Store; env: Env },
   options: { force: boolean; refreshMinutes: number },
 ): Promise<{ fetched: number; failed: number }>;
 
@@ -3178,8 +3198,8 @@ export const GH_TIMEOUT_MS = 10_000;
 export function prsDue(prs: readonly PrRow[], nowNs: Ns, refreshMinutes: number, force: boolean): PrRow[];
 export function batchArgs(keys: readonly PrKey[]): string[];
 export function parseBatch(keys: readonly PrKey[], result: RunResult, atNs: Ns): Map<string, PrFetchResult>;
-export function fetchPrs(deps: { runner: Runner; clock: Clock; store: Store }, urls: readonly string[]): Promise<{ fetched: number; failed: number }>;
-export function refreshPrs(deps: { runner: Runner; clock: Clock; store: Store }, options: { force: boolean; refreshMinutes: number }): Promise<{ fetched: number; failed: number }>;
+export function fetchPrs(deps: { runner: Runner; clock: Clock; store: Store; env: Env }, urls: readonly string[]): Promise<{ fetched: number; failed: number }>;
+export function refreshPrs(deps: { runner: Runner; clock: Clock; store: Store; env: Env }, options: { force: boolean; refreshMinutes: number }): Promise<{ fetched: number; failed: number }>;
 export const CHIP_ORDER: readonly ['cant-read', 'unfetched', 'checks-failing', 'changes-requested', 'checks-pending', 'review-required', 'draft', 'approved-green', 'merged', 'closed'];
 export type ChipLevel = (typeof CHIP_ORDER)[number];
 export function prLevel(pr: PrRow): ChipLevel;
@@ -3192,7 +3212,7 @@ export function chipFor(prs: readonly PrRow[]): { level: ChipLevel; count: numbe
 `open` with `okAtNs T0−1m` → not due; `draft` with `okAtNs null` → due; `state null, error 'x'` → due;
 `force` → every non-final row.
 
-`batchArgs([o/r#1, a/b#22])` → starts with `['api','graphql','-f']`, then `'query=' + q`, then exactly
+`batchArgs([o/r#1, a/b#22])` → starts with `['api','graphql','--hostname','github.com','-f']`, then `'query=' + q`, then exactly
 `['-f','o0=o','-f','r0=r','-F','n0=1','-f','o1=a','-f','r1=b','-F','n1=22']`; `q` contains
 `$o0: String!, $r0: String!, $n0: Int!, $o1: String!, $r1: String!, $n1: Int!`,
 `p0: repository(owner: $o0, name: $r0)`, `pullRequest(number: $n1)`, `statusCheckRollup`, and neither `o/r` nor `a/b`.
@@ -3205,15 +3225,19 @@ export function chipFor(prs: readonly PrRow[]): { level: ChipLevel; count: numbe
 - `p0` ok, `p1: null`, `errors: [{ path: ['p1','pullRequest'], message: 'Could not resolve to a PullRequest with the number of 2.' }]`, code 1 →
   `p0` ok, `p1` `{ ok: false, atNs: T0, error: 'Could not resolve to a PullRequest with the number of 2.' }`.
 - `p1` missing, no `errors` → `p1` error `'not found'`.
-- `timedOut` → both `'gh timed out after 10 s'`; `notFound` → both `'gh is not installed'`;
+- `errors: [{ message: 'Something went wrong …' }]` (no path), `p1: null` → `p1` error with that message, `p0` ok; an error with a path of its own wins over one without.
+- A `pullRequest` without a string `title`, or with state `'SUSPENDED'` → `ok: false` (never `closed`).
+- `timedOut` → both `'gh timed out after 10 s'`; `notFound` → both `'gh is not installed'`; code `null` (killed) → `'gh was killed by a signal'`; code `0` with stdout that is no answer (colour escape sequences, `''`, `null`) and any stderr → both `'gh returned output skydeck could not read'` (stderr not used); code `1` with the same stdout → the first stderr line;
   stdout `''`, stderr `'HTTP 401: Bad credentials\nmore'`, code 1 → both `'HTTP 401: Bad credentials'`; stdout `''`, stderr `''`, code 4 → `'gh exited 4'`.
 
 `refreshPrs` (store in a temp dir, `fakeRunner`, `fakeClock(T0)`, `refreshMinutes 5`)
-- 120 due rows → 3 `gh` calls with 50, 50 and 20 aliases, each with `{ timeoutMs: 10000 }`; returns `{ fetched: 120, failed: 0 }`; rows have `okAtNs T0`.
+- 120 due rows → 3 `gh` calls with 50, 50 and 20 aliases, each with `{ timeoutMs: 10000, env }` (`env`: see the environment case below); returns `{ fetched: 120, failed: 0 }`; rows have `okAtNs T0`.
 - A batch answered `timedOut` → its rows keep their previous `state`, get `error 'gh timed out after 10 s'`, `triedAtNs T0`; `failed` counts them; no throw.
 - `merged` rows are never sent; a non-due `open` row is not sent unless `force`.
 - No due rows → no `gh` call.
 - `fetchPrs(deps, [url1])` with a non-due open row → one `gh` call with one alias, the row updated; `fetchPrs(deps, [])` → no call.
+- `fetchPrs(deps, [mergedUrl])` → no call, the row unchanged (`pr add` of a merged pull request while `gh` fails). Two overlapping refreshes of one open row, the slow one failing or answering `OPEN` after the fast one saved `MERGED` → the row stays `merged`, no error; `{ fetched: 0, failed: 0 }` for the slow one.
+- `deps.env` `{ PATH, HOME, GH_TOKEN, GH_HOST, GH_FORCE_TTY, CLICOLOR_FORCE, GH_PROMPT_DISABLED: '0', NO_COLOR: undefined }` → every `gh` call has options `{ timeoutMs: 10000, env: { PATH, HOME, GH_TOKEN, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } }` (so the first `refreshPrs` case above reads `{ timeoutMs: 10000, env }` with that `env`); `deps.env` `{}` → env `{ GH_PROMPT_DISABLED: '1', NO_COLOR: '1' }`; deps without `env` do not compile (`@ts-expect-error`). A runner that rejects → the rows get `'gh could not be run: <first line>'`, no throw; a repeated url is asked once; a url that is no row is not asked.
 
 `prLevel` / `chipFor`
 
@@ -3693,8 +3717,8 @@ export const command: Command;
 ```
 
 **`--refresh` (D11).** Without it `ls` and `show` never touch the network. With it, before printing:
-`ls` runs `refreshPrs({ runner, clock, store }, { force: false, refreshMinutes: config.prRefreshMinutes })`;
-`show` runs `fetchPrs` on the urls of `prsDue` restricted to that session's attached pull requests.
+`ls` runs `refreshPrs({ runner, clock, store, env: ctx.platform.env }, { force: false, refreshMinutes: config.prRefreshMinutes })` (`env` is required in the deps of every `fetchPrs`/`refreshPrs` call, 2.6);
+`show` runs `fetchPrs` (same deps, with `env`) on the urls of `prsDue` restricted to that session's attached pull requests.
 
 **Formats (contract).** `formatList`: per group a line with its name (`no group` for null), then
 each row as `'  ' + formatRow(row, nowNs, width − 2)`; one empty line between groups; `'no sessions\n'`
@@ -3819,11 +3843,11 @@ joined by one space (D24), cleaned with `cleanLabel`/`cleanGroup`; no text clear
 prints one confirmation line on stdout: `0b5f3c1e label: fix retry`, `0b5f3c1e label cleared`,
 `0b5f3c1e group: ABC-9`, `0b5f3c1e note saved`, `0b5f3c1e done`, `0b5f3c1e undone`,
 `0b5f3c1e: attached https://github.com/o/r/pull/1 (<status>)` — `<status>` is what `formatPrLine` prints after the url and its two spaces —, `0b5f3c1e: detached https://github.com/o/r/pull/1`.
-`pr add` attaches, then fetches that pull request at once with `fetchPrs(deps, [url])` (D11; same
+`pr add` attaches, then fetches that pull request at once with `fetchPrs({ runner, clock, store, env: ctx.platform.env }, [url])` (D11; same
 timeout); a failed fetch leaves it `cant-read` and the command still exits `EXIT.ok`.
 `note` without `--set` calls `editNote`. `pr refresh` runs
-`refreshPrs({ runner, clock, store }, { force: true, refreshMinutes: config.prRefreshMinutes })`
-and prints `fetched <n>, failed <m>`.
+`refreshPrs({ runner, clock, store, env: ctx.platform.env }, { force: true, refreshMinutes: config.prRefreshMinutes })`
+(2.6) and prints `fetched <n>, failed <m>`.
 
 **Test cases** (`d = testDeck(t, …)`, clock `T0`; S1 and S2 known from transcripts; commands run as `await main([...], d.ctx)`;
 results are checked in the store (`d.deck.store.meta`, `sessionPrs`, `prs`) or with `loadRows(d.deck)`)
@@ -4175,7 +4199,7 @@ export function runInteractiveList(ctx: Context): Promise<number>;
 
 **Behaviour fixed here.** On start: `loadRows` → `initModel` → write `\x1b[?1049h\x1b[?25l` and
 the first frame (`\x1b[H\x1b[2J` + `render(...).join('\r\n')`), then start a background
-`refreshPrs({ force: false, refreshMinutes })`; when it settles, `loadRows` and
+`refreshPrs` (`{ force: false, refreshMinutes }`; deps include `env: ctx.platform.env`, 2.6); when it settles, `loadRows` and
 `withRows(…, reorder false)` and repaint. For every chunk from `io.keys()`: `decodeKeys`, then
 `reduce` per key, run the effect, repaint. Effects: `label`/`group` → `cleanLabel`/`cleanGroup`
 (empty text clears) + `setLabel`/`setGroup`, `withMessage('saved')` or the error message;
