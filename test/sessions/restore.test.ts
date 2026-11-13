@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
@@ -11,6 +12,7 @@ import type { RestoreEntry, RestoreOutcome } from '../../src/sessions/restore.ts
 import { ResumeRefusedError } from '../../src/platform/errors.ts';
 import { acquireLock, lockKey, prepareResume } from '../../src/sessions/resume.ts';
 import { handoffScript, hereTerminal } from '../../src/terminals/here.ts';
+import { shellQuote } from '../../src/text/shell.ts';
 import type { OpenResult, Terminal } from '../../src/terminals/types.ts';
 import type { TestDeck } from '../helpers/deck.ts';
 import { ds, rowOf } from '../helpers/derived.ts';
@@ -21,6 +23,7 @@ import {
   HOUR,
   MINUTE,
   NOW,
+  PROC_START,
   addSession,
   fakeTabs,
   leftoverBusyFile,
@@ -821,6 +824,45 @@ test('a start event that names no process does not count as started: the session
   assert.notEqual(d.deck.store.getKv(lockKey(sid(1))), null);
 });
 
+test('a start stored before restore took its lock does not count as started, though it is dated later', async (t) => {
+  const { d, entries } = fiveToRestore(t);
+  // A claude of this boot (pid 5151, dead now) started sid(1) while the clock was ten minutes ahead.
+  d.deck.store.insertEvent({
+    spoolName: `ahead-${sid(1)}.ev`,
+    timeNs: NOW + 10n * MINUTE,
+    kind: 'start',
+    detail: 'resume',
+    rawDetail: 'resume',
+    sessionId: sid(1),
+    bootId: BOOT_B,
+    pid: 5151,
+    procStart: PROC_START,
+    cwd: projectDir(d),
+    argv: ['claude', '--resume', sid(1)],
+    name: null,
+    payload: null,
+  });
+  const tabs = fakeTabs(d, { starts: () => false });
+  const { outcome } = await run(d, tabs.terminal, entries.slice(0, 1));
+  assert.deepEqual(tabs.opened, [sid(1)]);
+  assert.deepEqual(outcome.started, []);
+  assert.deepEqual(outcome.timedOut, [sid(1)]);
+  assert.notEqual(d.deck.store.getKv(lockKey(sid(1))), null); // its tab may still start it
+});
+
+test('a scripted run on a session restore waits for does not count as started: it times out, keeps its lock', async (t) => {
+  const { d, entries } = fiveToRestore(t);
+  const tabs = fakeTabs(d, {
+    starts: () => false,
+    // While the tab opens, a script runs `claude -p --resume` on the session (a real process).
+    onOpen: (_count, id) => scriptedEvent(d, BOOT_B, id, d.clock.nowNs(), 5555),
+  });
+  const { outcome } = await run(d, tabs.terminal, entries.slice(0, 1));
+  assert.deepEqual(outcome.started, []);
+  assert.deepEqual(outcome.timedOut, [sid(1)]);
+  assert.notEqual(d.deck.store.getKv(lockKey(sid(1))), null);
+});
+
 test('a lock restore waits on is not renewed once another skydeck has taken it over', async (t) => {
   const { d, entries, sleeps } = fiveToRestore(t, {
     config: { ...TAB_CONFIG, restoreStartTimeoutSeconds: 3 },
@@ -842,17 +884,17 @@ function here(d: TestDeck): Terminal {
   return hereTerminal({ files: d.platform.files, env: d.platform.env });
 }
 
-test('without tabs the first session is handed off here and the commands of the others are printed', async (t) => {
+/** What restore prints for a session it does not start: a resume that guards and locks when it is run. */
+const resumeLine = (id: string): string => `skydeck resume ${id} --here`;
+
+test('without tabs the first session is handed off here and a skydeck resume of each other one is printed', async (t) => {
   const { d, entries } = fiveToRestore(t);
   const dir = projectDir(d);
   const { outcome, lines } = await run(d, here(d), entries.slice(0, 3));
   assert.deepEqual(outcome, {
     ...NOTHING,
     handedOff: sid(1),
-    printed: [
-      `cd -- ${dir} && claude --resume ${sid(2)}`,
-      `cd -- ${dir} && claude --resume ${sid(3)}`,
-    ],
+    printed: [resumeLine(sid(2)), resumeLine(sid(3))],
   });
   assert.equal(
     readFileSync(join(d.sandbox.root, 'handoff'), 'utf8'),
@@ -862,8 +904,80 @@ test('without tabs the first session is handed off here and the commands of the 
     d.deck.store.kvEntries('resume_lock:').map((entry) => entry.key),
     [lockKey(sid(1))],
   );
-  assert.ok(lines.includes(outcome.printed[0] ?? '?'), lines.join('\n'));
-  assert.ok(lines.includes(outcome.printed[1] ?? '?'), lines.join('\n'));
+  // Each line names its session first (short id, title, directory): with --yes no list was shown.
+  assert.deepEqual(lines, [
+    `resuming 00000001 ${titleOf(entries, sid(1))} in this terminal`,
+    'to resume these yourself, run:',
+    `00000002 ${shellQuote(titleOf(entries, sid(2)))} in ${shellQuote(dir)}:`,
+    resumeLine(sid(2)),
+    `00000003 ${shellQuote(titleOf(entries, sid(3)))} in ${shellQuote(dir)}:`,
+    resumeLine(sid(3)),
+  ]);
+});
+
+test('the line that names a printed session quotes its title and directory: pasted, it runs nothing', async (t) => {
+  // A failed hand-off prints its own command, the next session its skydeck resume line: each after
+  // a line that names the session. A user who selects the name line with the command pastes both.
+  const d = restoreDeck(t, { config: TAB_CONFIG, env: { SKYDECK_HANDOFF: undefined } });
+  const titles = [
+    'Port notes -> README.md; $(touch TITLE_RAN) `touch TICK_RAN`',
+    "it's done; touch SEMI_RAN",
+  ];
+  const dir = join(d.sandbox.root, 'proj $(touch DIR_RAN)');
+  titles.forEach((title, index) => {
+    const n = index + 1;
+    addSession(d, sid(n), {
+      boot: BOOT_A,
+      pid: 100 + n,
+      startNs: T0 - HOUR,
+      activityNs: T0 - BigInt(n) * MINUTE,
+      dir,
+    });
+    d.deck.store.updateMeta(sid(n), { label: title }, T0);
+  });
+  const entries = planRestore(listOrder(d), d.deck.store.events(), BOOT_B, false);
+  const { outcome, lines } = await run(d, here(d), entries);
+  const quotedDir = `'${d.sandbox.root}/proj $(touch DIR_RAN)'`;
+  const names = [
+    `00000001 'Port notes -> README.md; $(touch TITLE_RAN) \`touch TICK_RAN\`' in ${quotedDir}:`,
+    `00000002 'it'\\''s done; touch SEMI_RAN' in ${quotedDir}:`,
+  ];
+  assert.deepEqual(lines.slice(-5), [
+    'to resume these yourself, run:',
+    names[0],
+    outcome.printed[0],
+    names[1],
+    resumeLine(sid(2)),
+  ]);
+  // Fed to a shell, each name line runs a command that does not exist, and nothing else.
+  const scratch = join(d.sandbox.root, 'scratch');
+  mkdirSync(scratch);
+  writeFileSync(join(scratch, 'README.md'), 'notes\n');
+  for (const name of names) {
+    const shell = spawnSync('sh', ['-s'], { cwd: scratch, input: `${name}\n`, encoding: 'utf8' });
+    // A shell ran the line, and its only command was not found (127): without these, a missing sh
+    // would let the checks below pass whatever the line holds.
+    assert.equal(shell.error, undefined, name);
+    assert.equal(shell.status, 127, `${name}\n${shell.stderr}`);
+  }
+  assert.deepEqual(readdirSync(scratch), ['README.md']);
+  assert.equal(readFileSync(join(scratch, 'README.md'), 'utf8'), 'notes\n');
+});
+
+test('the line that names a printed session shows its label when it has one', async (t) => {
+  const d = restoreDeck(t, { config: TAB_CONFIG });
+  addSession(d, sid(1), { boot: BOOT_A, pid: 101, startNs: T0 - HOUR, activityNs: T0 - MINUTE });
+  addSession(d, sid(2), {
+    boot: BOOT_A,
+    pid: 102,
+    startNs: T0 - HOUR,
+    activityNs: T0 - 2n * MINUTE,
+  });
+  d.deck.store.updateMeta(sid(2), { label: 'fix it' }, T0);
+  const entries = planRestore(listOrder(d), d.deck.store.events(), BOOT_B, false);
+  const { lines } = await run(d, here(d), entries);
+  assert.ok(lines.includes(`00000002 'fix it' in ${shellQuote(projectDir(d))}:`), lines.join('\n'));
+  assert.equal(/[\x00-\x09\x0b-\x1f\x7f]/.test(lines.join('\n')), false, JSON.stringify(lines));
 });
 
 test('without tabs a first session that became running is refused and the next one is handed off', async (t) => {
@@ -872,7 +986,7 @@ test('without tabs a first session that became running is refused and the next o
   const { outcome } = await run(d, here(d), entries.slice(0, 3));
   assert.deepEqual(outcome.failed, [{ id: sid(1), reason: '00000001 is running (pid 4242)' }]);
   assert.equal(outcome.handedOff, sid(2));
-  assert.deepEqual(outcome.printed, [`cd -- ${projectDir(d)} && claude --resume ${sid(3)}`]);
+  assert.deepEqual(outcome.printed, [resumeLine(sid(3))]);
 });
 
 test('without tabs a command is not printed for a session that became running', async (t) => {
@@ -881,7 +995,7 @@ test('without tabs a command is not printed for a session that became running', 
   const { outcome } = await run(d, here(d), entries.slice(0, 3));
   assert.equal(outcome.handedOff, sid(1));
   assert.deepEqual(outcome.failed, [{ id: sid(2), reason: '00000002 is running (pid 4242)' }]);
-  assert.deepEqual(outcome.printed, [`cd -- ${projectDir(d)} && claude --resume ${sid(3)}`]);
+  assert.deepEqual(outcome.printed, [resumeLine(sid(3))]);
 });
 
 test('without tabs a command is not printed for a session another skydeck is resuming', async (t) => {
@@ -893,18 +1007,26 @@ test('without tabs a command is not printed for a session another skydeck is res
   assert.deepEqual(outcome.failed, [
     { id: sid(2), reason: '00000002 is being resumed by another skydeck' },
   ]);
-  assert.deepEqual(outcome.printed, [`cd -- ${projectDir(d)} && claude --resume ${sid(3)}`]);
+  assert.deepEqual(outcome.printed, [resumeLine(sid(3))]);
 });
 
 test('without tabs a handoff that fails prints that session’s command too and hands nothing off', async (t) => {
   const { d, entries } = fiveToRestore(t, { env: { SKYDECK_HANDOFF: undefined } });
   const dir = projectDir(d);
-  const { outcome } = await run(d, here(d), entries.slice(0, 2));
+  const { outcome, lines } = await run(d, here(d), entries.slice(0, 2));
   assert.equal(outcome.handedOff, null);
   assert.deepEqual(outcome.failed, [{ id: sid(1), reason: 'not started through bin/skydeck' }]);
+  // As `resume` does after a failed launch: its own command, under the lock restore took for it.
   assert.deepEqual(outcome.printed, [
     `cd -- ${dir} && claude --resume ${sid(1)}`,
-    `cd -- ${dir} && claude --resume ${sid(2)}`,
+    resumeLine(sid(2)),
+  ]);
+  assert.deepEqual(lines.slice(-5), [
+    'to resume these yourself, run:',
+    `00000001 ${shellQuote(titleOf(entries, sid(1)))} in ${shellQuote(dir)}:`,
+    `cd -- ${dir} && claude --resume ${sid(1)}`,
+    `00000002 ${shellQuote(titleOf(entries, sid(2)))} in ${shellQuote(dir)}:`,
+    resumeLine(sid(2)),
   ]);
   // The user may run sid(1)'s printed command now: its lock keeps other skydecks off it.
   assert.deepEqual(
@@ -934,7 +1056,32 @@ test('without tabs a failed handoff whose command cannot be printed releases its
   assert.deepEqual(d.deck.store.kvEntries('resume_lock:'), []);
 });
 
-test('without tabs a command holding control characters is never printed', async (t) => {
+test('without tabs a handoff that timed out prints no command and keeps its lock, printable or not', async (t) => {
+  // No terminal that runs here times out today; one that did may have started the session.
+  const timingOut: Terminal = {
+    name: 'here',
+    opensTabs: false,
+    open: async () => ({ ok: false, error: 'timed out; it may have started', timedOut: true }),
+  };
+  for (const argv of [['claude'], ['claude', '--model', 'op\x1b]0;x\x07us']]) {
+    const d = restoreDeck(t, { config: TAB_CONFIG });
+    addSession(d, sid(1), { boot: BOOT_A, pid: 101, startNs: T0 - HOUR, argv });
+    const entries = planRestore(listOrder(d), d.deck.store.events(), BOOT_B, false);
+    const { outcome, lines } = await run(d, timingOut, entries);
+    assert.deepEqual(
+      outcome,
+      {
+        ...NOTHING,
+        failed: [{ id: sid(1), reason: 'timed out; it may have started' }],
+      },
+      JSON.stringify(argv),
+    );
+    assert.deepEqual(lines, ['failed 00000001: timed out; it may have started']);
+    assert.notEqual(d.deck.store.getKv(lockKey(sid(1))), null, JSON.stringify(argv));
+  }
+});
+
+test('without tabs a session whose own command holds control characters gets the skydeck resume line', async (t) => {
   const d = restoreDeck(t, { config: TAB_CONFIG });
   addSession(d, sid(1), { boot: BOOT_A, pid: 101, startNs: T0 - HOUR, activityNs: T0 - MINUTE });
   addSession(d, sid(2), {
@@ -947,14 +1094,31 @@ test('without tabs a command holding control characters is never printed', async
   const entries = planRestore(listOrder(d), d.deck.store.events(), BOOT_B, false);
   const { outcome, lines } = await run(d, here(d), entries);
   assert.equal(outcome.handedOff, sid(1));
+  // The raw command is never printed; `skydeck resume` hands it to the launcher, where it is quoted.
+  assert.deepEqual(outcome.printed, [resumeLine(sid(2))]);
+  assert.deepEqual(outcome.failed, []);
+  assert.equal(/[\x00-\x09\x0b-\x1f\x7f]/.test(lines.join('\n')), false, JSON.stringify(lines));
+});
+
+test('without tabs no resume line is printed for a session once the boot id cannot be read', async (t) => {
+  const { d, entries } = fiveToRestore(t);
+  // During sid(1)'s hand-off another skydeck starts sid(2), and the boot id stops being readable:
+  // every process now looks dead, sid(2)'s too.
+  const handingOff: Terminal = {
+    name: 'here',
+    opensTabs: false,
+    async open() {
+      startClaude(d, sid(2), 4242);
+      d.proc.setBootId(null);
+      return { ok: true };
+    },
+  };
+  const { outcome } = await run(d, handingOff, entries.slice(0, 2));
+  assert.equal(outcome.handedOff, sid(1));
   assert.deepEqual(outcome.printed, []);
   assert.deepEqual(outcome.failed, [
-    {
-      id: sid(2),
-      reason: 'the command contains control characters and cannot be printed safely',
-    },
+    { id: sid(2), reason: 'cannot tell which sessions are running: the boot id could not be read' },
   ]);
-  assert.equal(/[\x00-\x09\x0b-\x1f\x7f]/.test(lines.join('\n')), false, JSON.stringify(lines));
 });
 
 test('without tabs too little memory starts nothing', async (t) => {

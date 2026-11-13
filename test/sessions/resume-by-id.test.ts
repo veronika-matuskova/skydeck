@@ -63,7 +63,8 @@ test('prepareResumeById resumes a session that is not running, and takes the loc
   assert.equal(prepared.kind, 'resume');
   assert.equal(prepared.sessionId, S1);
   assert.deepEqual(prepared.argv, ['claude', '--resume', S1, '--model', 'opus']);
-  assert.equal(lockOf(d, S1), `${T0}`);
+  // The time it was taken, and the latest event of S1 the decision was made on.
+  assert.equal(lockOf(d, S1), `${T0}:${d.deck.store.latestEventIdOfSession(S1)}`);
 });
 
 test('prepareResumeById refreshes first: a start event still in the spool is seen, and the session refused', (t) => {
@@ -144,11 +145,12 @@ test('a scripted start never releases a resume lock: it is not the claude the re
   const d = testDeck(t);
   resumableSession(d);
   prepareResumeById(d.deck, S1); // the lock, taken at T0
+  const seen = d.deck.store.latestEventIdOfSession(S1);
   scriptedRunHolds(d, 5555, PRINT_RESUME, T0 + 5n * SEC);
   d.clock.setNs(T0 + 10n * SEC);
   refresh(d.deck); // ingests the scripted start, then sweeps the locks
   assert.equal(d.deck.store.events().at(-1)?.kind, 'scripted');
-  assert.equal(lockOf(d, S1), `${T0}`);
+  assert.equal(lockOf(d, S1), `${T0}:${seen}`); // the lock as it was taken
   assert.equal(isLockHeld(d.deck, S1), true);
 });
 
@@ -208,7 +210,9 @@ test('a scripted process that cleared away from the session no longer blocks its
   };
   writeFileSync(join(d.deck.places.spoolDir, spoolName(end, 10)), spoolText(end));
   assert.equal(prepareResumeById(d.deck, S1).sessionId, S1);
-  assert.equal(lockOf(d, S1), `${T0}`);
+  // The scripted start and its end count for the latest event the lock records.
+  assert.equal(lockOf(d, S1), `${T0}:${d.deck.store.latestEventIdOfSession(S1)}`);
+  assert.equal(d.deck.store.events().at(-1)?.kind, 'scripted-end');
 });
 
 test('prepareResumeById refuses a session whose holder an earlier reconcile recorded on the session it left', (t) => {

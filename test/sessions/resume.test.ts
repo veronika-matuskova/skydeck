@@ -13,16 +13,21 @@ import {
   LOCK_TTL_NS,
   acquireLock,
   checkResumable,
+  flagWarnings,
   isLockHeld,
+  lockEventId,
   lockKey,
+  openSafely,
   prepareNew,
   prepareResume,
   readLock,
   releaseLock,
   renewLock,
+  settleFailedLaunch,
   sweepLocks,
 } from '../../src/sessions/resume.ts';
-import type { SawEvents } from '../../src/sessions/resume.ts';
+import type { PreparedLaunch, SawEvents } from '../../src/sessions/resume.ts';
+import type { Terminal } from '../../src/terminals/types.ts';
 import type { DerivedSession, Holder } from '../../src/sessions/types.ts';
 import type { Store } from '../../src/store/store.ts';
 import type { NewEvent } from '../../src/store/types.ts';
@@ -258,6 +263,18 @@ test('checkResumable refuses a running session before anything else', (t) => {
   );
 });
 
+test('checkResumable refuses a row derived without a boot id, before anything else', (t) => {
+  // Without the boot id no process looked alive: the row cannot show that the session runs.
+  const d = testDeck(t);
+  for (const session of [dead(d, { bootId: null }), running(d, [4242])]) {
+    session.bootId = null;
+    assert.equal(
+      refusal(() => checkResumable(rowWith(d, session), d.platform.files)),
+      'cannot tell which sessions are running: the boot id could not be read',
+    );
+  }
+});
+
 test('checkResumable lets a dead session with an existing directory through', (t) => {
   const d = testDeck(t);
   checkResumable(rowOf(dead(d)), d.platform.files);
@@ -326,10 +343,10 @@ test('acquireLock replaces a lock when the session started at or after the lock'
   for (const startNs of [T0, T0 + 2n * SEC]) {
     const d = testDeck(t);
     acquireLock(d.deck, S1, sawNow(d));
-    startEvent(d, S1, startNs);
+    const started = startEvent(d, S1, startNs);
     d.clock.setNs(T0 + 5n * SEC);
     acquireLock(d.deck, S1, sawNow(d));
-    assert.equal(lockOf(d, S1), `${T0 + 5n * SEC}`);
+    assert.equal(lockOf(d, S1), `${T0 + 5n * SEC}:${started}`);
   }
 });
 
@@ -375,6 +392,103 @@ test('a start event without a real process does not make sweepLocks remove a loc
     assert.equal(sweepLocks(d.deck), 0, JSON.stringify(over));
     assert.equal(lockOf(d, S1), `${T0 - 5n * SEC}`);
   }
+});
+
+test("acquireLock records the session's latest event id after the time: `<time>:<id>`", (t) => {
+  const d = testDeck(t);
+  const seen = startEvent(d, S1, T0 - 10n * SEC);
+  acquireLock(d.deck, S1, { latestEventId: seen });
+  assert.equal(lockOf(d, S1), `${T0}:${seen}`);
+  acquireLock(d.deck, S2, { latestEventId: null }); // a session without events: the time alone
+  assert.equal(lockOf(d, S2), `${T0}`);
+});
+
+/** A start of a real process (pid 5151, dead now) dated ten minutes ahead: the clock stepped back since. */
+function startAhead(d: TestDeck): number {
+  return startEvent(d, S1, T0 + 600n * SEC, { pid: 5151, spoolName: `ahead-${S1}.ev` });
+}
+
+test('a start stored before the lock was taken does not release it, whatever its time', (t) => {
+  const d = testDeck(t);
+  const ahead = startAhead(d);
+  acquireLock(d.deck, S1, { latestEventId: ahead });
+  d.clock.setNs(T0 + 10n * SEC);
+  assert.equal(
+    refusal(() => acquireLock(d.deck, S1, sawNow(d))),
+    '0b5f3c1e is being resumed (10 s ago); try again in 50 s',
+  );
+  assert.equal(isLockHeld(d.deck, S1), true);
+  assert.equal(sweepLocks(d.deck), 0);
+  assert.equal(lockOf(d, S1), `${T0}:${ahead}`);
+});
+
+test('a start stored after the lock was taken releases it when it is dated at or after the lock', (t) => {
+  const d = testDeck(t);
+  const ahead = startAhead(d);
+  acquireLock(d.deck, S1, { latestEventId: ahead });
+  startEvent(d, S1, T0 - 1n); // stored later, but dated before the lock: not this resume's
+  d.clock.setNs(T0 + 5n * SEC);
+  assert.equal(isLockHeld(d.deck, S1), true);
+  const started = startEvent(d, S1, T0 + 2n * SEC); // the claude the resume started
+  assert.equal(isLockHeld(d.deck, S1), false);
+  acquireLock(d.deck, S1, { latestEventId: started });
+  assert.equal(lockOf(d, S1), `${T0 + 5n * SEC}:${started}`);
+});
+
+test('a scripted run or its end, stored after the lock, neither releases it nor slips past the saw check', (t) => {
+  for (const kind of ['scripted', 'scripted-end'] as const) {
+    const d = testDeck(t);
+    const seen = startEvent(d, S1, T0 - 10n * SEC);
+    acquireLock(d.deck, S1, { latestEventId: seen });
+    d.clock.setNs(T0 + 5n * SEC);
+    const scripted = startEvent(d, S1, T0 + 2n * SEC, {
+      kind,
+      detail: '',
+      pid: 5555,
+      spoolName: `${kind}-${S1}.ev`,
+    });
+    assert.equal(isLockHeld(d.deck, S1), true, kind); // only a real `start` is the resume's own
+    assert.equal(sweepLocks(d.deck), 0, kind);
+    assert.equal(
+      refusal(() => acquireLock(d.deck, S1, { latestEventId: seen })),
+      '0b5f3c1e is being resumed (5 s ago); try again in 55 s',
+      kind,
+    );
+    d.clock.setNs(T0 + 61n * SEC); // the lock has expired: now the saw check speaks
+    assert.equal(
+      refusal(() => acquireLock(d.deck, S1, { latestEventId: seen })),
+      CHANGED,
+      kind,
+    );
+    acquireLock(d.deck, S1, { latestEventId: scripted }); // it counts as the latest event
+    assert.equal(lockOf(d, S1), `${T0 + 61n * SEC}:${scripted}`, kind);
+  }
+});
+
+test('a lock that records no event id (an earlier skydeck wrote it) is released as before', (t) => {
+  const d = testDeck(t);
+  writeLock(d, S1, `${T0}`);
+  startAhead(d); // any start at or after the lock's time releases it
+  d.clock.setNs(T0 + 5n * SEC);
+  assert.equal(isLockHeld(d.deck, S1), false);
+  assert.equal(sweepLocks(d.deck), 1);
+});
+
+test('a lock whose event id is not a number is stale like any value skydeck did not write', (t) => {
+  for (const value of [`${T0}:`, `${T0}:x`, `${T0}:-1`, `${T0}:1:2`, `:1`, `${T0}:1 `]) {
+    const d = testDeck(t);
+    writeLock(d, S1, value);
+    assert.equal(isLockHeld(d.deck, S1), false, JSON.stringify(value));
+    acquireLock(d.deck, S1, sawNow(d));
+    assert.equal(lockOf(d, S1), `${T0}`, JSON.stringify(value));
+  }
+});
+
+test('lockEventId is the event id a lock records; null when it records none or is no lock', () => {
+  assert.equal(lockEventId(`${T0}:42`), 42);
+  assert.equal(lockEventId(`${T0}`), null);
+  assert.equal(lockEventId('soon'), null);
+  assert.equal(lockEventId(`${T0}:x`), null);
 });
 
 test('acquireLock locks each session on its own', (t) => {
@@ -431,7 +545,7 @@ test('acquireLock takes the lock when the session still has the latest event it 
   const d = testDeck(t);
   const seen = startEvent(d, S1, T0 - 10n * SEC);
   acquireLock(d.deck, S1, { latestEventId: seen });
-  assert.equal(lockOf(d, S1), `${T0}`);
+  assert.equal(lockOf(d, S1), `${T0}:${seen}`);
   d.clock.setNs(T0 + 61n * SEC);
   acquireLock(d.deck, S2, { latestEventId: null }); // none seen, none there
   assert.equal(lockOf(d, S2), `${T0 + 61n * SEC}`);
@@ -463,7 +577,7 @@ test('acquireLock ignores the events of other sessions', (t) => {
   const seen = startEvent(d, S1, T0 - 10n * SEC);
   startEvent(d, S2, T0 - 1n * SEC);
   acquireLock(d.deck, S1, { latestEventId: seen });
-  assert.equal(lockOf(d, S1), `${T0}`);
+  assert.equal(lockOf(d, S1), `${T0}:${seen}`);
 });
 
 test('acquireLock cannot be called without the decision it checks (a compile error, not a skipped check)', (t) => {
@@ -638,6 +752,16 @@ test('renewLock moves a lock that is still ours to now and returns its new value
   assert.throws(() => acquireLock(d.deck, S1, sawNow(d)), /is being resumed \(50 s ago\)/);
 });
 
+test('renewLock keeps the event id the lock records: only a later start releases it still', (t) => {
+  const d = testDeck(t);
+  const ahead = startAhead(d);
+  acquireLock(d.deck, S1, { latestEventId: ahead });
+  d.clock.setNs(T0 + 50n * SEC);
+  assert.equal(renewLock(d.deck, S1, `${T0}:${ahead}`), `${T0 + 50n * SEC}:${ahead}`);
+  assert.equal(lockOf(d, S1), `${T0 + 50n * SEC}:${ahead}`);
+  assert.equal(isLockHeld(d.deck, S1), true);
+});
+
 test('renewLock leaves a lock that is no longer ours, or gone, as it is, and says so', (t) => {
   const d = testDeck(t);
   writeLock(d, S1, `${T0 + 1n}`); // another skydeck took it over
@@ -685,6 +809,88 @@ test('isLockHeld is true for a lock that holds, by the rules of acquireLock, and
   isLockHeld(w.deck, S2);
   assert.equal(w.transactions(), 0);
   assert.equal(lockOf(d, S2), null);
+});
+
+// --- what the command line and restore share about a launch ---------------------------------------
+
+test('flagWarnings: what a resume says about the flags it could not take over, unprefixed', () => {
+  assert.deepEqual(flagWarnings({ flagsKnown: true, unknownFlags: [] }), []);
+  assert.deepEqual(flagWarnings({ flagsKnown: false, unknownFlags: ['--a\x1b[1mb', '--c'] }), [
+    'original flags unknown; resuming with defaults',
+    'started with flags skydeck does not know, not passed on resume: --ab --c',
+  ]);
+});
+
+test('openSafely turns a terminal that rejects into a failed open, not a timeout', async () => {
+  const spec = { cwd: '/w', argv: ['claude'] };
+  const rejecting: Terminal = {
+    name: 'wezterm',
+    opensTabs: true,
+    open: () => Promise.reject(new Error('the terminal fell over')),
+  };
+  assert.deepEqual(await openSafely(rejecting, spec), {
+    ok: false,
+    error: 'cannot open the terminal (Error: the terminal fell over)',
+    timedOut: false,
+  });
+  const fine: Terminal = { ...rejecting, open: async () => ({ ok: true }) };
+  assert.deepEqual(await openSafely(fine, spec), { ok: true });
+});
+
+function launch(d: TestDeck, over: Partial<PreparedLaunch> = {}): PreparedLaunch {
+  return {
+    sessionId: S1,
+    cwd: '/w',
+    argv: ['claude', '--resume', S1],
+    flagsKnown: true,
+    unknownFlags: [],
+    kind: 'resume',
+    ...over,
+  };
+}
+
+const UNPRINTABLE_ARGV = ['claude', '--resume', S1, '--model', 'op\x1b[31mus'];
+
+test('settleFailedLaunch gives the command to print, and keeps the lock: the user may run it now', (t) => {
+  const d = testDeck(t);
+  acquireLock(d.deck, S1, sawNow(d));
+  assert.equal(
+    settleFailedLaunch(d.deck, launch(d), `${T0}`, false),
+    `cd -- /w && claude --resume ${S1}`,
+  );
+  assert.equal(lockOf(d, S1), `${T0}`);
+});
+
+test('settleFailedLaunch after a timeout gives no command and keeps the lock: it may have started', (t) => {
+  for (const argv of [['claude', '--resume', S1], UNPRINTABLE_ARGV]) {
+    const d = testDeck(t);
+    acquireLock(d.deck, S1, sawNow(d));
+    assert.equal(settleFailedLaunch(d.deck, launch(d, { argv }), `${T0}`, true), null);
+    assert.equal(lockOf(d, S1), `${T0}`, JSON.stringify(argv));
+  }
+});
+
+test('settleFailedLaunch with nothing started and nothing printable releases the lock, if still ours', (t) => {
+  const d = testDeck(t);
+  acquireLock(d.deck, S1, sawNow(d));
+  assert.equal(
+    settleFailedLaunch(d.deck, launch(d, { argv: UNPRINTABLE_ARGV }), `${T0}`, false),
+    null,
+  );
+  assert.equal(lockOf(d, S1), null);
+  writeLock(d, S1, 'someone else');
+  settleFailedLaunch(d.deck, launch(d, { argv: UNPRINTABLE_ARGV }), `${T0}`, false);
+  assert.equal(lockOf(d, S1), 'someone else');
+});
+
+test('settleFailedLaunch of a new session that started nothing and printed nothing removes its label and group', (t) => {
+  const d = testDeck(t);
+  d.deck.store.updateMeta(S1, { label: 'fix it', group: 'G' }, T0);
+  const p = launch(d, { kind: 'new', argv: UNPRINTABLE_ARGV });
+  assert.equal(settleFailedLaunch(d.deck, p, null, true), null); // timed out: kept
+  assert.equal(d.deck.store.meta(S1)?.label, 'fix it');
+  assert.equal(settleFailedLaunch(d.deck, p, null, false), null);
+  assert.equal(d.deck.store.meta(S1), null);
 });
 
 // --- prepareResume ---------------------------------------------------------------------------------
@@ -838,7 +1044,7 @@ test('prepareResume resumes a session that has not changed since its row was rea
   const seen = startEvent(d, S1, T0 - 120n * SEC);
   const prepared = prepareResume(d.deck, rowWith(d, dead(d, { lastEventId: seen })));
   assert.equal(prepared.sessionId, S1);
-  assert.equal(lockOf(d, S1), `${T0}`);
+  assert.equal(lockOf(d, S1), `${T0}:${seen}`);
 });
 
 const BOOT_UNKNOWN = 'cannot tell which sessions are running: the boot id could not be read';
