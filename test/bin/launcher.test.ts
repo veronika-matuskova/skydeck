@@ -19,8 +19,11 @@ const bootstrap = realpathSync(fileURLToPath(new URL('../../bin/bootstrap.mjs', 
 /** A sandbox whose PATH holds only the programs the launcher itself uses. */
 function launcherSandbox(t: TestContext): Sandbox {
   const s = sandbox(t);
-  s.link('dirname', 'readlink');
-  return s;
+  s.link('dirname', 'readlink', 'mktemp', 'cat', 'rm');
+  // The launcher creates its handoff file in TMPDIR: keep it inside the sandbox.
+  const tmp = join(s.root, 'tmp');
+  mkdirSync(tmp);
+  return { ...s, env: (extra) => s.env({ TMPDIR: tmp, ...extra }) };
 }
 
 function writeFakeNode(path: string, name: string): void {
@@ -128,6 +131,34 @@ describe('bin/skydeck: which node it runs', () => {
     pin(s, join(s.home, '.local/share/skydeck'), 'home');
 
     const r = launch(launcher, [], s.env({ SKYDECK_HOME: undefined }));
+
+    assert.equal(r.node, 'home');
+  });
+
+  test('a relative SKYDECK_HOME is ignored, as if it were unset', (t) => {
+    const s = launcherSandbox(t);
+    writeFakeNode(join(s.bin, 'node'), 'path');
+    // Started from s.root, a relative SKYDECK_HOME would find this link, so it must be refused.
+    pin(s, join(s.root, 'rel-home', 'data'), 'relative');
+    pin(s, join(s.home, '.local/share/skydeck'), 'home');
+
+    const r = launch(launcher, [], s.env({ SKYDECK_HOME: 'rel-home' }), s.root);
+
+    assert.equal(r.node, 'home');
+  });
+
+  test('a relative XDG_DATA_HOME is ignored, as if it were unset', (t) => {
+    const s = launcherSandbox(t);
+    writeFakeNode(join(s.bin, 'node'), 'path');
+    pin(s, join(s.root, 'rel-xdg', 'skydeck'), 'relative');
+    pin(s, join(s.home, '.local/share/skydeck'), 'home');
+
+    const r = launch(
+      launcher,
+      [],
+      s.env({ SKYDECK_HOME: undefined, XDG_DATA_HOME: 'rel-xdg' }),
+      s.root,
+    );
 
     assert.equal(r.node, 'home');
   });
@@ -253,6 +284,24 @@ describe('bin/skydeck: how it calls node', () => {
     writeFakeNode(join(s.bin, 'node'), 'path');
 
     const r = launch(launcher, [], s.env());
+
+    assert.equal(r.cache, join(s.home, '.cache/skydeck/compile-cache'));
+  });
+
+  test('a relative XDG_CACHE_HOME is ignored', (t) => {
+    const s = launcherSandbox(t);
+    writeFakeNode(join(s.bin, 'node'), 'path');
+
+    const r = launch(launcher, [], s.env({ XDG_CACHE_HOME: 'rel-cache' }), s.root);
+
+    assert.equal(r.cache, join(s.home, '.cache/skydeck/compile-cache'));
+  });
+
+  test('an empty NODE_COMPILE_CACHE counts as unset', (t) => {
+    const s = launcherSandbox(t);
+    writeFakeNode(join(s.bin, 'node'), 'path');
+
+    const r = launch(launcher, [], s.env({ NODE_COMPILE_CACHE: '' }));
 
     assert.equal(r.cache, join(s.home, '.cache/skydeck/compile-cache'));
   });

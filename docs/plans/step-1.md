@@ -137,7 +137,7 @@ Each is binding for the implementer. The last column names the task that records
 | D12 | The fallback title is `YYYY-MM-DD HH:MM <basename of dir>` in UTC (`?` when there is no dir). | Deterministic tests. | 11 (7.1) |
 | D13 | `Context` gains `platform`; `Io` gains `isTTY`, `size`, `readLine`, `keys` (task 1, once). Commands open the database through `withDeck` (task 12). | Brief 18: the platform task extends `Context` once. | — |
 | D14 | `$VISUAL`, else `$EDITOR`, else `vi`; the value is split on spaces; the note file path is appended. | 7.1 only says `$EDITOR`. | 15 (7.1) |
-| D15 | The WezTerm adapter runs `wezterm cli spawn`; when `wezterm` is not found and `$WSL_DISTRO_NAME` is set, it retries with `wezterm.exe`. | 13 "Open": tabs from WSL. | 7 (7.6) |
+| D15 | The WezTerm adapter runs `wezterm cli --no-auto-start spawn`; when `wezterm` is not found and `$WSL_DISTRO_NAME` is set, it retries with `wezterm.exe`. | 13 "Open": tabs from WSL. | 7 (7.6) |
 | D16 | The resume lock stores its creation time (ns, decimal) as content; age is computed from that, not from mtime. Locks are swept at the end of every refresh. | Fake clock in tests. | 16 (7.6) |
 | D17 | `--all` restore entries are preselected relative to the last event of *their own* boot. | 7.8 defines it for the default set only. | 18 (7.8) |
 | D18 | Several-value flags consume following arguments up to the next one starting with `-` (as Claude Code's own parser does); `--flag=value` consumes nothing more; `--` ends the flags and everything after it is positional. | 7.6 "several values". | 2 (7.6) |
@@ -528,7 +528,9 @@ export function sanitize(text: string): string;
 
 ```ts
 /**
- * POSIX sh quoting. A non-empty word made only of [A-Za-z0-9_@%+=:,./-] is returned unchanged.
+ * POSIX sh quoting. A non-empty word made only of [A-Za-z0-9_@%+=:,./-] is returned unchanged,
+ * except that a word starting with '=' is quoted (zsh would expand it if the printed command were
+ * pasted there).
  * Anything else is wrapped in single quotes, each ' inside becoming '\'' . The empty word is ''.
  */
 export function shellQuote(word: string): string;
@@ -1131,6 +1133,8 @@ export function handoffScript(spec: LaunchSpec): string;
 /**
  * open() writes handoffScript to the file named by env SKYDECK_HANDOFF (Files.writeText).
  * Without that variable: { ok: false, error: 'not started through bin/skydeck' }.
+ * open() is async: a file that cannot be written, or an empty argv (a caller bug: `exec` with
+ * nothing after it does nothing), is a rejected promise, not a returned error.
  * The caller must exit right after a successful open(); the launcher then execs the command.
  */
 export function hereTerminal(deps: { files: Files; env: Env }): Terminal;
@@ -1140,10 +1144,13 @@ export function hereTerminal(deps: { files: Files; env: Env }): Terminal;
 
 ```ts
 /**
- * open() runs `wezterm cli spawn [--domain-name <domain>] --cwd <cwd> -- <argv…>` with a 10 s
- * timeout; on notFound with env WSL_DISTRO_NAME set it retries once with `wezterm.exe` (D15).
+ * open() runs `wezterm cli --no-auto-start spawn [--domain-name <domain>] --cwd <cwd> -- <argv…>`
+ * with a 10 s timeout (`--no-auto-start`: with no WezTerm window open the call fails instead of
+ * starting a hidden mux server that would hold the session where nobody can see it); on notFound
+ * with env WSL_DISTRO_NAME set it retries once with `wezterm.exe` (D15).
  * ok when the exit code is 0; otherwise error = first line of stderr, or "wezterm exited <code>",
- * "wezterm timed out", "wezterm is not installed".
+ * "wezterm timed out; a tab may have opened" (the request can reach WezTerm before the call is
+ * killed, so a caller must not print a paste-able fallback after it), "wezterm is not installed".
  */
 export function weztermTerminal(deps: { runner: Runner; env: Env }, domain: string | null): Terminal;
 ```
@@ -1656,22 +1663,40 @@ exec claude --resume 0b5f3c1e-8d2a-4f6b-9c3d-2e1f0a9b8c7d -n 'my label' --model 
 (the directory and every word through `shellQuote`). `bin/skydeck` (task 7) behaves exactly like this reference:
 
 ```sh
-handoff=$(mktemp "${TMPDIR:-/tmp}/skydeck-handoff.XXXXXX") || exit 1
-trap 'rm -f -- "$handoff"' EXIT
+skydeck_tmp=/tmp
+case ${TMPDIR:-} in
+  /*) if [ -d "$TMPDIR" ]; then skydeck_tmp=$TMPDIR; fi ;;
+esac
+skydeck_handoff=$(mktemp "$skydeck_tmp/skydeck-handoff.XXXXXX" 2>/dev/null ||
+  mktemp /tmp/skydeck-handoff.XXXXXX) || exit 1
+trap 'rm -f -- "$skydeck_handoff"' EXIT
 trap 'exit 130' HUP INT TERM
-SKYDECK_HANDOFF=$handoff
+trap 'exit 131' QUIT
+SKYDECK_HANDOFF=$skydeck_handoff
 export SKYDECK_HANDOFF
-status=0
-"$node" "$root/bin/bootstrap.mjs" "$@" || status=$?
-if [ -s "$handoff" ]; then
-  script=$(cat -- "$handoff")
-  rm -f -- "$handoff"
+skydeck_status=0
+NODE_COMPILE_CACHE=$skydeck_cache "$skydeck_node" "$skydeck_root/bin/bootstrap.mjs" "$@" ||
+  skydeck_status=$?
+if [ -s "$skydeck_handoff" ]; then
+  skydeck_script=$(cat -- "$skydeck_handoff")
+  rm -f -- "$skydeck_handoff"
   trap - EXIT
   unset SKYDECK_HANDOFF
-  eval "$script"
+  eval "$skydeck_script"
 fi
-exit "$status"
+exit "$skydeck_status"
 ```
+
+`$TMPDIR` counts only when it is an absolute path to a directory; if the file cannot be created
+there (or `$TMPDIR` is unusable) it goes to `/tmp`, and only a failure there ends the launcher with
+status 1. `$skydeck_cache` is the compile-cache path computed above the block (`$NODE_COMPILE_CACHE`
+when non-empty, else `$XDG_CACHE_HOME/skydeck/compile-cache` when `XDG_CACHE_HOME` is absolute, else
+`$HOME/.cache/skydeck/compile-cache`); it is given to node alone and is not exported, so the program
+the handoff starts does not inherit it. The launcher's own shell variables carry the `skydeck_`
+prefix (`skydeck_self`, `skydeck_root`, `skydeck_node`, …): the program the handoff starts gets the
+caller's environment except `SKYDECK_HANDOFF`, and an assignment to a plain name the caller had
+exported (`status`, `cache`) would change what it inherits. `CDPATH` is unset only inside the
+command substitutions that `cd`, never for the program.
 
 #### 2.10.4 Lock file
 
@@ -2505,13 +2530,16 @@ no message text is kept.
 - Create: `src/text/sanitize.ts`, `src/text/shell.ts`, `src/text/age.ts`
 - Create: `src/terminals/types.ts`, `src/terminals/here.ts`, `src/terminals/wezterm.ts`, `src/terminals/index.ts`
 - Modify: `bin/skydeck` — replace the final `exec "$node" …` with the handoff block of 2.10.3
-  (the Node selection and compile-cache lines above it stay), and use `$SKYDECK_HOME/data/node`
+  (the Node selection lines above it stay; the compile-cache lines set `$cache` instead of exporting
+  `NODE_COMPILE_CACHE`, and ignore a relative `XDG_CACHE_HOME`), and use `$SKYDECK_HOME/data/node`
   only when `SKYDECK_HOME` is absolute, and `$XDG_DATA_HOME/skydeck/node` only when
   `XDG_DATA_HOME` is absolute (D26: `case $X in /*) … esac`)
 - Modify: `test/bin/launcher.test.ts` — `launcherSandbox` also links `mktemp`, `cat` and `rm`, the
-  programs the handoff block uses; add two cases: a relative `SKYDECK_HOME` does not select
+  programs the handoff block uses; add cases: a relative `SKYDECK_HOME` does not select
   `<SKYDECK_HOME>/data/node`, and a relative `XDG_DATA_HOME` does not select `<XDG_DATA_HOME>/skydeck/node`
-  (both fall back to `$HOME/.local/share/skydeck/node`)
+  (both fall back to `$HOME/.local/share/skydeck/node`); a relative `XDG_CACHE_HOME` is ignored for the
+  compile cache, and an empty `NODE_COMPILE_CACHE` counts as unset; `launcherSandbox` puts `TMPDIR` inside the
+  sandbox
 - Modify: `docs/design.md` 7.6 (D5: the sentence "Commands are always run as argument lists, never through a shell string" becomes "commands are run as argument lists; the one exception is the `--here` handoff, a generated `sh` fragment in which every word is quoted by the same function as the printed fallback"; D15)
 - Test: `test/text/text.test.ts`, `test/terminals/terminals.test.ts`, `test/bin/launcher-handoff.test.ts`
 
@@ -2569,6 +2597,7 @@ export function terminalFor(name: 'here' | 'wezterm', platform: Platform, config
 'a=b,c:d@e%f+g' → unchanged                          '-n' → -n
 '' → ''                   'my label' → 'my label'   "it's" → 'it'\''s'
 '$HOME' → '$HOME'         'a*b' → 'a*b'             'ü' → 'ü'          '~' → '~'
+'=ls' → '=ls'             '=' → '='                 'a=b' → a=b        '--x=y' → --x=y
 shellJoin(['claude', '--resume', S1, '-n', 'my label']) → "claude --resume 0b5f3c1e-8d2a-4f6b-9c3d-2e1f0a9b8c7d -n 'my label'"
 ```
 
@@ -2584,12 +2613,13 @@ Round trip (spawns `/bin/sh` with `env: sandbox(t).env()`, so nothing of the dev
   `"cd -- /home/dev/projects/demo || exit 1\nexec claude --resume " + S1 + " -n 'my label' --model opus\n"`.
 - `handoffScript({ cwd: "/tmp/it's", argv: ['claude'] })` → `"cd -- '/tmp/it'\\''s' || exit 1\nexec claude\n"`.
 - `hereTerminal` with env `{}` → `open` → `{ ok: false, error: 'not started through bin/skydeck' }`; with
-  `{ SKYDECK_HANDOFF: <dir>/h }` → `{ ok: true }` and the file holds `handoffScript(spec)`; `name 'here'`, `opensTabs false`.
+  `{ SKYDECK_HANDOFF: <dir>/h }` → `{ ok: true }` and the file holds `handoffScript(spec)`; `name 'here'`, `opensTabs false`;
+  a handoff file in a missing directory, or `argv: []`, makes `open` reject (nothing written for `[]`).
 - `weztermTerminal` with `fakeRunner` returning code 0, domain `null` → one call
-  `('wezterm', ['cli','spawn','--cwd','/w','--','claude','--resume',S1], { timeoutMs: 10000 })`, result `{ ok: true }`.
-- domain `'WSL:Ubuntu'` → args `['cli','spawn','--domain-name','WSL:Ubuntu','--cwd','/w','--',…]`.
+  `('wezterm', ['cli','--no-auto-start','spawn','--cwd','/w','--','claude','--resume',S1], { timeoutMs: 10000 })`, result `{ ok: true }`.
+- domain `'WSL:Ubuntu'` → args `['cli','--no-auto-start','spawn','--domain-name','WSL:Ubuntu','--cwd','/w','--',…]`.
 - code 1, stderr `'no running wezterm\nmore'` → `{ ok: false, error: 'no running wezterm' }`; code 1, stderr `''` → `'wezterm exited 1'`;
-  `timedOut` → `'wezterm timed out'`; `notFound` without `WSL_DISTRO_NAME` → `'wezterm is not installed'`, one call;
+  `timedOut` → `'wezterm timed out; a tab may have opened'`; `notFound` without `WSL_DISTRO_NAME` → `'wezterm is not installed'`, one call;
   `notFound` with `WSL_DISTRO_NAME 'Ubuntu'` → a second call to `'wezterm.exe'` with the same args, whose result counts.
 - `name 'wezterm'`, `opensTabs true`; `terminalFor('here', …).name` → `'here'`; `terminalFor('wezterm', …).name` → `'wezterm'`.
 
@@ -2601,8 +2631,14 @@ is a script the test writes: `#!/bin/sh` + `echo "$SKYDECK_HANDOFF" > "$STUB_SEE
    exit 0, stdout `<s.root>/dir\n[a b]\n[it's]\n[]\n`; no `skydeck-handoff.*` left in `TMPDIR`.
 2. No `STUB_SOURCE`, `STUB_STATUS=7` → exit 7, empty stdout, nothing left in `TMPDIR`.
 3. A handoff whose `cwd` does not exist → exit 1, nothing left in `TMPDIR`.
-4. The path in `STUB_SEEN` starts with `<TMPDIR>/skydeck-handoff.`.
-5. The scaffold's `test/bin/launcher.test.ts` (with the three extra links) and `test/bin/bootstrap.test.ts` still pass.
+4. The path in `STUB_SEEN` starts with `<TMPDIR>/skydeck-handoff.`; with `TMPDIR` unset, empty, relative, naming
+   a directory that does not exist, naming a file, or naming a directory that cannot be written (skipped as root), it starts with `/tmp/skydeck-handoff.` and the file is gone afterwards.
+5. The program the handoff starts replaces the launcher (`echo $$` prints the launcher's pid), does not see
+   `SKYDECK_HANDOFF`, and does not see `NODE_COMPILE_CACHE` unless the caller set it (the caller's value, even an empty one, is left as it was).
+   A TERM, INT or HUP sent to the launcher while node runs ends it with status 130, a QUIT with 131, and leaves no handoff file.
+   The program sees the caller's `CDPATH`, and variables the caller exported under the launcher's former plain names
+   (`status`, `cache`, `handoff`, …) unchanged.
+6. The scaffold's `test/bin/launcher.test.ts` (with the three extra links) and `test/bin/bootstrap.test.ts` still pass.
 
 **Steps**
 - [ ] Write the three test files. `npm test` → fails.
@@ -3510,7 +3546,7 @@ lock, then command) → `launchPrepared`. `prepareNew` cleans the label and grou
 - `resume --help`, `new --help` → 0 with the usage.
 - `resume 0b5f` (config default `here`) → 0, `<root>/handoff` = `handoffScript({ cwd: <dir>, argv })`.
 - Without `SKYDECK_HANDOFF` (`env: { SKYDECK_HANDOFF: undefined }`) → 1, stderr contains `not started through bin/skydeck` and `cd -- <dir> && claude --resume <S1>`.
-- `resume 0b5f --tab` with config `{"terminal":"wezterm"}` and gh-free `fakeRunner` answering code 0 → 0, one `wezterm cli spawn` call
+- `resume 0b5f --tab` with config `{"terminal":"wezterm"}` and gh-free `fakeRunner` answering code 0 → 0, one `wezterm cli --no-auto-start spawn` call
   with `--cwd <dir> -- claude --resume <S1>`; answering code 1 → 1 and the quoted command on stderr.
 - `resume 0b5f --tab` with terminal `here` → 1, stderr names the missing tab adapter and prints the command.
 - `resume 0b5f --here --tab` → 2. `resume nope1234` → 3. A running S1 → 4 naming the pid. Twice within 60 s → second 4.
