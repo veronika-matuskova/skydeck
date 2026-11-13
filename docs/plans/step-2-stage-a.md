@@ -1830,29 +1830,67 @@ export interface WebSocketConnection {
   sendBinary(bytes: Uint8Array): void;
   /** Bytes written to the socket and not yet flushed (for S2 8.2.8). */
   readonly buffered: number;
+  /** Sends a close frame and ends the socket; the socket is destroyed if the peer has not closed
+   *  its side CLOSE_WAIT_MS later (ruled, #44). RangeError for a code a server may not send
+   *  (outside 1000–1014 and 3000–4999, or 1004, 1005, 1006) or a reason above 123 UTF-8 bytes;
+   *  nothing is sent then (ruled, #44). */
   close(code: number, reason?: string): void;
+  /** Destroys the socket at once, with no close frame; onClose gets 1006 unless it had a code
+   *  (ruled, #44). */
+  destroy(): void;
+  // Each onX adds a listener; earlier ones stay. When a listener that a read calls throws (onText,
+  // onBinary, or onClose for a close the read caused), the socket is destroyed (onClose gets 1006
+  // unless it had a code) and the error is thrown on. onDrain, and onClose called from close(),
+  // destroy() or the socket's end or close, are outside this rule (ruled, #44).
   onText(listener: (text: string) => void): void;
   onBinary(listener: (bytes: Uint8Array) => void): void;
   onDrain(listener: () => void): void;
   onClose(listener: (code: number) => void): void;
 }
 /** Answers 101 and returns the connection, or answers 400 and returns null for a request that is
- *  not a valid version-13 upgrade. The caller has checked Host and Origin before (task 17). */
-export function acceptWebSocket(req: IncomingMessage, socket: Duplex, head: Buffer): WebSocketConnection | null;
+ *  not a valid version-13 upgrade. The caller has checked Host and Origin before (task 17).
+ *  `clock` (the platform's) times CLOSE_WAIT_MS (ruled, #44). */
+export function acceptWebSocket(req: IncomingMessage, socket: Duplex, head: Buffer, clock: Clock): WebSocketConnection | null;
 export const MAX_MESSAGE = 1024 * 1024;
+/** How long a closing connection waits for the peer to close its side (ruled, #44). */
+export const CLOSE_WAIT_MS = 5_000;
 ```
+
+Once a connection closes, whichever side began it (the server's `close`, a breach of the
+protocol, the answer to the peer's close, the peer's end of its side), the socket is destroyed if
+the peer has not closed its side `CLOSE_WAIT_MS` later, so that a peer which neither reads nor
+closes cannot hold a connection for ever; the wait stops when the socket closes (ruled, #44).
+
+A ping is answered with a pong carrying the same payload; while the socket is backed up (a write
+was refused by its queue), only the latest ping's pong is kept and sent at the drain, as RFC 6455
+5.5.3 allows, so that a peer that pings and never reads cannot grow the queue (ruled, #44). The
+101 and the 400 are answers of the WebSocket endpoint, not pages: they carry
+`Content-Security-Policy: default-src 'none'; base-uri 'none'; form-action 'none';
+frame-ancestors 'none'` (no port is needed) with the other headers of S2 8.2.1 (ruled, #44).
 
 **Files**
 - Create: `src/window/websocket.ts`
 - Test: `test/window/websocket.test.ts` (a `node:http` server from `platform.net.listenHttp` on
   port 0; the `ws` package as the client)
 
-**Tests** (platform: `testPlatform` (its `net` is real))
+**Tests** (platform: `testPlatform` (its `net` is real, its clock fake))
 - text and binary messages of 0 bytes, 125, 126, 65,535, 65,536 and 1 MiB both ways; a message
   fragmented into three frames with a ping between them; ping → pong with the same payload; close
   with a code → the same code echoed; invalid UTF-8 in a text message → close 1007; an unmasked
   client frame (written with a raw socket) → close 1002; a message over 1 MiB (also as fragments
   that add up to more) → close 1009; a missing `Sec-WebSocket-Key` → 400.
+- The 101 and the 400 carry the headers above and no CORS header; `close()`'s RangeErrors; many
+  pings while the socket is backed up → one pong, for the latest (ruled, #44).
+- With the fake clock: after `close()`, a breach, the peer's close and the peer's end, a peer that
+  keeps its side open has the socket destroyed `CLOSE_WAIT_MS` later and not before; a close the
+  peer finishes leaves no timer; `destroy()` → onClose 1006 at once, the client sees the
+  connection go, no timer left; `destroy()` after `close()` keeps the code (ruled, #44).
+- Reads of any size (ruled, #44): a sequence of every frame kind fed in one read, split at every
+  byte and one byte per read does the same; a frame sent one byte per read is read in linear time
+  (its last byte at once); a long run of empty continuation frames keeps no memory (a heap
+  bound); a control frame whose length takes the 16- or 64-bit form → close 1002; every breach
+  also fed one byte per read; a peer that resets the connection after the 101 or right after a
+  refused request leaves nothing uncaught.
 - `buffered` grows while the client does not read (a paused socket) and `onDrain` fires once it
   reads again.
 
