@@ -1336,18 +1336,40 @@ linked into the sandbox where needed)
 
 **Goal.** `bin/skydeck-keepalive <runtimeDir>`: the inner script `wsl.exe` runs. It writes its own
 pid line and `$WSL_INTEROP`, then stays while the server or any keeper is alive, judged by design
-5.5's rule with `sh` builtins only.
+5.5's rule with `sh` builtins only (plus `sleep`, `mv` and `rm`, see below).
 
 **Files**
 - Create: `bin/skydeck-keepalive`
 - Test: `test/bin/keepalive.test.ts`
 
-**Behaviour.** S2 6.1: `sh` builtins, `sleep` and `mv` only. It writes `keepalive.pid` (`<pid>
+**Behaviour.** S2 6.1: `sh` builtins, `sleep`, `mv` and `rm` only; `rm` removes nothing but
+`keepalive.pid` at exit (below) and the script's own temporary file after a failed write (ruled by
+the plan owner in pull request #34: no builtin deletes a file). It writes `keepalive.pid` (`<pid>
 <process start> <boot id>`, the format of 2.8, process start from field 22 of `/proc/$$/stat`
 after the last `)`) and `keepalive.interop` (`$WSL_INTEROP`, empty when unset), each through a
 temporary name and `mv`. Every 10 seconds (`SKYDECK_TEST_KEEPALIVE_SECONDS` overrides, for tests only)
 it reads `server.pid` and `terms/*.pid` and exits 0 when none names a process alive on the current
-boot with the same process start. It removes `keepalive.pid` when it exits.
+boot with the same process start. It removes `keepalive.pid` when it exits, only while that file
+still holds its own line.
+
+Also ruled by the plan owner in pull request #34: `keepalive.interop` holds the value exactly, with
+no newline added, and is empty (zero bytes) when it is unset and also when the value contains a
+newline or a carriage return; the reader (task 19) still checks that what it reads is an absolute
+path. Liveness has three answers, as for task 8's `pidLineState`: alive, dead (another boot id; no
+`/proc/<pid>/stat`; another process start) and unknown (the boot id cannot be read; the stat
+cannot be read or holds no process start). The script exits 0 only when every line is dead; an
+unknown line keeps it like a live one; a garbled line names no process and keeps nothing. The
+script creates its files under `umask 077`. It refuses wrong arguments (none, more than one, a
+relative path, not a directory) with a usage line on stderr and exit 2, writing nothing; it exits 1
+when at start it cannot read the boot id or its own process start (it cannot write its own line and
+has judged nothing yet), when it cannot write its files, or when `sleep` fails.
+`SKYDECK_TEST_KEEPALIVE_SECONDS` counts only as a whole number of at least 1 without leading zeros;
+anything else gives the 10 seconds. `SKYDECK_TEST_PROC` (tests only, an absolute path) stands in for
+`/proc` where the boot id and the watched processes are read, so that a test can make an entry
+unreadable; the script's own process start always comes from the real `/proc`. On SIGHUP, SIGINT
+or SIGTERM it exits at once with 129, 130 or 143 and the same cleanup: its `sleep` runs in the
+background and is killed, so that a signal does not wait for the interval and "removes
+`keepalive.pid` when it exits" also holds for a terminated script.
 
 **Tests** (platform: none; real `sh`, real processes, the interval set to 1 s)
 - with a `server.pid` naming a live `sleep` → still running after 3 s; after the `sleep` is killed
