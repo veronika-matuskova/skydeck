@@ -1,0 +1,235 @@
+// Resume and new (design 7.6, 7.7): the guard that refuses a session that runs or cannot be
+// resumed, the lock that keeps two resumes of one session apart (principle 7), and the commands.
+import { isAbsolute } from 'node:path';
+
+import {
+  buildNewCommand,
+  buildResumeCommand,
+  parseLaunchArgs,
+  unknownFlags,
+} from '../claude/launch.ts';
+import { isSessionId } from '../claude/live.ts';
+import { ResumeRefusedError, UsageError } from '../platform/errors.ts';
+import { NS_PER_SECOND } from '../platform/time.ts';
+import type { Files, Ns } from '../platform/types.ts';
+import type { Store } from '../store/store.ts';
+import type { KvKey } from '../store/types.ts';
+import type { Deck } from './deck.ts';
+import { cleanGroup, cleanLabel } from './labels.ts';
+import type { ListRow } from './list.ts';
+import { describeError } from './problems.ts';
+
+/** How long a resume lock holds when no `start` event for the session arrives. */
+export const LOCK_TTL_NS: Ns = 60n * NS_PER_SECOND;
+
+const LOCK_PREFIX = 'resume_lock:';
+
+/**
+ * The kv key of the session's resume lock, `resume_lock:<sessionId>` (D16). Throws RangeError for
+ * anything but a session id (a lowercase UUID).
+ */
+export function lockKey(sessionId: string): `resume_lock:${string}` {
+  if (!isSessionId(sessionId)) {
+    throw new RangeError(`not a session id (a lowercase UUID): ${JSON.stringify(sessionId)}`);
+  }
+  return `${LOCK_PREFIX}${sessionId}`;
+}
+
+/**
+ * 7.6 refusals (ResumeRefusedError), in this order: running → "<short> is running (pid <p>[, pid
+ * <p>…])", holders latest first; no transcript → "<short> has no transcript"; expired → "<short> has
+ * expired: its transcript is gone"; project directory missing (or no longer a directory) →
+ * "<short>: directory <dir> no longer exists". A directory that is not known, not absolute, or
+ * cannot be looked at is refused too, with a message saying so. The directory checked is the
+ * session's own (`row.session.dir`); `row.dir` is display text and only appears in messages.
+ */
+export function checkResumable(row: ListRow, files: Files): void {
+  const { session, shortId } = row;
+  if (session.holders.length > 0) {
+    const pids = session.holders.map((holder) => `pid ${holder.process.pid}`).join(', ');
+    throw new ResumeRefusedError(`${shortId} is running (${pids})`);
+  }
+  if (session.transcript === null) {
+    throw new ResumeRefusedError(`${shortId} has no transcript`);
+  }
+  if (row.marks.includes('expired')) {
+    throw new ResumeRefusedError(`${shortId} has expired: its transcript is gone`);
+  }
+  const dir = session.dir;
+  if (dir === null) {
+    throw new ResumeRefusedError(`${shortId}: its project directory is not known`);
+  }
+  if (!isAbsolute(dir)) {
+    throw new ResumeRefusedError(`${shortId}: directory ${row.dir} is not an absolute path`);
+  }
+  let kind: string | null;
+  try {
+    kind = files.stat(dir)?.kind ?? null;
+  } catch (error) {
+    throw new ResumeRefusedError(
+      `${shortId}: directory ${row.dir} cannot be checked (${describeError(error)})`,
+    );
+  }
+  if (kind !== 'dir') {
+    throw new ResumeRefusedError(`${shortId}: directory ${row.dir} no longer exists`);
+  }
+}
+
+/** The time a lock holds (its kv value); null when the value is not one. */
+function lockTimeOf(value: string): Ns | null {
+  return /^[0-9]{1,30}$/.test(value) ? BigInt(value) : null;
+}
+
+/** How old a lock taken at `takenNs` is at `nowNs`, when it still holds; null when it is stale. */
+function freshAge(store: Store, sessionId: string, takenNs: Ns | null, nowNs: Ns): Ns | null {
+  if (takenNs === null) {
+    return null; // not a time: skydeck never wrote it
+  }
+  const ageNs = nowNs - takenNs;
+  // A lock from far in the future cannot be from this clock: it would block for as long.
+  if (ageNs >= LOCK_TTL_NS || -ageNs >= LOCK_TTL_NS || store.hasStartSince(sessionId, takenNs)) {
+    return null;
+  }
+  return ageNs;
+}
+
+/**
+ * D16. In one store transaction (BEGIN IMMEDIATE, which no two skydecks hold at once): reads the
+ * session's lock; when it holds — younger than LOCK_TTL_NS (a time less than LOCK_TTL_NS in the
+ * future counts as now), and no start event for the session at or after it (hasStartSince) — throws
+ * ResumeRefusedError "<short> is being resumed (<n> s ago); try again in <m> s" (n rounded down, m
+ * rounded up); otherwise writes the lock with the clock's time. A value that is not a time is stale.
+ */
+export function acquireLock(deck: Deck, sessionId: string): void {
+  const key = lockKey(sessionId);
+  const { store, platform } = deck;
+  store.transaction(() => {
+    const nowNs = platform.clock.nowNs();
+    const value = store.getKv(key);
+    const ageNs = value === null ? null : freshAge(store, sessionId, lockTimeOf(value), nowNs);
+    if (ageNs !== null) {
+      const ago = (ageNs > 0n ? ageNs : 0n) / NS_PER_SECOND;
+      const wait = (LOCK_TTL_NS - ageNs + NS_PER_SECOND - 1n) / NS_PER_SECOND;
+      throw new ResumeRefusedError(
+        `${sessionId.slice(0, 8)} is being resumed (${ago} s ago); try again in ${wait} s`,
+      );
+    }
+    store.setKv(key, `${nowNs}`);
+  });
+}
+
+/** The keys of the locks that are stale at `nowNs`. */
+function staleLocks(store: Store, nowNs: Ns): KvKey[] {
+  return store
+    .kvEntries(LOCK_PREFIX)
+    .filter(({ key, value }) => {
+      const sessionId = key.slice(LOCK_PREFIX.length);
+      return freshAge(store, sessionId, lockTimeOf(value), nowNs) === null;
+    })
+    .map(({ key }) => key);
+}
+
+/**
+ * Removes the locks that are stale by the rules of acquireLock. Returns how many. It looks first
+ * without a transaction: a refresh that finds no stale lock (most do) takes no write lock on the
+ * database. When there are some, it reads again and deletes inside one store transaction, so a lock
+ * another skydeck has just taken over is never deleted.
+ */
+export function sweepLocks(deck: Deck): number {
+  const { store, platform } = deck;
+  if (staleLocks(store, platform.clock.nowNs()).length === 0) {
+    return 0;
+  }
+  return store.transaction(() => {
+    const keys = staleLocks(store, platform.clock.nowNs());
+    for (const key of keys) {
+      store.deleteKv(key);
+    }
+    return keys.length;
+  });
+}
+
+export interface PreparedLaunch {
+  sessionId: string;
+  cwd: string;
+  argv: string[];
+  flagsKnown: boolean;
+  unknownFlags: string[];
+  /** 'new': the session does not exist until claude starts, so there is nothing to resume yet. */
+  kind: 'resume' | 'new';
+}
+
+/**
+ * checkResumable, acquireLock, buildResumeCommand(config.claudeCommand, row.session.launch, id,
+ * row.label) — in this order, so a session that is refused takes no lock. `unknownFlags` is
+ * unknownFlags(row.session.launch) ([] without a launch command).
+ */
+export function prepareResume(deck: Deck, row: ListRow): PreparedLaunch {
+  checkResumable(row, deck.platform.files);
+  const cwd = row.session.dir;
+  if (cwd === null) {
+    throw new Error('checkResumable let a session without a directory through'); // unreachable
+  }
+  acquireLock(deck, row.id);
+  const launch = row.session.launch;
+  const command = buildResumeCommand({
+    claudeCommand: deck.config.claudeCommand,
+    launch,
+    sessionId: row.id,
+    label: row.label,
+  });
+  return {
+    sessionId: row.id,
+    cwd,
+    argv: command.argv,
+    flagsKnown: command.flagsKnown,
+    unknownFlags: launch === null ? [] : unknownFlags(launch),
+    kind: 'resume',
+  };
+}
+
+/**
+ * Refuses (UsageError naming it) a flag of `extra` that is on the flag table's removed list (7.6):
+ * one that chooses which session claude opens, its name or where it runs. `-r <id>` or `-c` would
+ * resume an existing session past the guard and the lock (principle 7). A cluster of short flags
+ * is refused when any flag in it is (`-cp`). Arguments that are no flag, such as a prompt, pass.
+ */
+function refuseSessionFlags(extra: readonly string[]): void {
+  for (const item of parseLaunchArgs(extra)) {
+    if (item.kind === 'flag' && item.spec !== null && item.spec.remove) {
+      const { names } = item.spec;
+      const shown = names.includes(item.name) ? item.name : `${item.name} (${names.at(-1)})`;
+      throw new UsageError(
+        `cannot pass ${shown} to claude: it chooses the session, its name or where it runs`,
+      );
+    }
+  }
+}
+
+/**
+ * 7.7: platform.uuid(), stores label/group (cleaned) as meta, buildNewCommand, cwd = platform.cwd;
+ * `flagsKnown` true, `unknownFlags` []. UsageError, and nothing stored, for a label or group that
+ * cleanLabel/cleanGroup refuse and for an extra flag on the removed list (refuseSessionFlags). No
+ * meta row is written when there is neither a label nor a group.
+ */
+export function prepareNew(
+  deck: Deck,
+  options: { label: string | null; group: string | null; extra: readonly string[] },
+): PreparedLaunch {
+  const label = options.label === null ? null : cleanLabel(options.label);
+  const group = options.group === null ? null : cleanGroup(options.group);
+  refuseSessionFlags(options.extra);
+  const { platform } = deck;
+  const cwd = platform.cwd;
+  const sessionId = platform.uuid();
+  const argv = buildNewCommand({
+    claudeCommand: deck.config.claudeCommand,
+    sessionId,
+    label,
+    extra: options.extra,
+  });
+  if (label !== null || group !== null) {
+    deck.store.updateMeta(sessionId, { label, group }, platform.clock.nowNs());
+  }
+  return { sessionId, cwd, argv, flagsKnown: true, unknownFlags: [], kind: 'new' };
+}

@@ -470,9 +470,15 @@ set are not part of a launch command and are not restored.
 A session without a transcript cannot be resumed.
 
 **The guard (principle 7).** Resume runs ingest and reconcile and refuses (exit 4) when the
-session is running, naming the holder. It then creates a lock file for the session exclusively;
-if the lock exists and is younger than 60 seconds, resume is refused and says how long to wait.
-The lock is removed when a `start` event for the session appears or after 60 seconds.
+session is running, naming the holder. It then takes a lock for the session; if the lock exists
+and is younger than 60 seconds, resume is refused and says how long to wait.
+The lock is removed when a `start` event for the session appears or after 60 seconds. The lock
+is an entry `resume_lock:<session id>` in the database's `kv` table, holding the time it was
+taken in nanoseconds (so its age does not depend on any file's modification time). Reading the
+lock and writing it happen in one database transaction, which no two skydecks hold at once, so
+of several resumes started together exactly one gets the lock. A lock dated 60 seconds or more
+in the future, or holding something other than a time, counts as stale too; stale locks are
+deleted, again in one transaction, at the end of every refresh.
 
 **Where.** `--here` replaces skydeck with `claude` in the current terminal: the command line tool
 hands the directory and the argument list back to the `bin/skydeck` launcher through a handoff
@@ -481,16 +487,26 @@ through the terminal adapter named in the configuration (first adapter: WezTerm,
 `wezterm cli --no-auto-start spawn`: with no WezTerm window open it fails instead of starting a
 hidden server that would hold the session where nobody can see it; when `wezterm` is not found
 and `$WSL_DISTRO_NAME` is set it retries with `wezterm.exe`, so tabs can be opened from WSL). The
-default is the configured `terminal`. If opening a tab fails, skydeck prints the command instead,
-quoted for a POSIX shell. Commands are run as argument lists; the one exception is the `--here`
-handoff, a generated `sh` fragment in which every word is quoted by the same function as the
-printed fallback.
+default is the configured `terminal`. `--tab` when the configured `terminal` opens no tabs
+(`here`) prints the command and exits 1. If opening a tab fails, skydeck prints the command
+instead, quoted for a POSIX shell, and exits 1 — with two exceptions, in which it prints no
+command: when the WezTerm call timed out (the tab may have opened, and pasting the command could
+resume the session a second time; skydeck says so, names the session, and says that running
+`skydeck` again shows whether it is running), and when the directory or a word of the command holds a control
+character (the printed line could act on the terminal or break when pasted). Commands are run as
+argument lists; the one exception is the `--here` handoff, a generated `sh` fragment in which
+every word is quoted by the same function as the printed fallback.
 
 ### 7.7 New
 
 `skydeck new` generates a session id, stores the label and group for it, and starts
 `claude --session-id <uuid> [-n <label>] <flags after -->` in the current directory, with the
-same `--here` / `--tab` choice as resume.
+same `--here` / `--tab` choice as resume. It refuses a flag after `--` that resume removes (7.6:
+the flags that choose the session, its name or where it runs, also inside a cluster of short
+flags such as `-cp`): `-r <id>` or `-c` would resume an existing session past the guard and the
+lock (principle 7). A prompt after `--` is passed on; it is the user's own and is never stored.
+When opening its tab times out, `new` prints no command but the new session's id, and says that
+running `skydeck` shows whether it started: a session that never started has nothing to resume.
 
 ### 7.8 Restore
 
@@ -540,7 +556,7 @@ commands for the others.
 | Name | Default | Holds |
 |---|---|---|
 | `dataDir` | `${XDG_DATA_HOME:-~/.local/share}/skydeck` | `skydeck.db`, the `node` and `skydeck-hook` links. |
-| `stateDir` | `${XDG_STATE_HOME:-~/.local/state}/skydeck` | `spool/`, `locks/`, `hook.log`. |
+| `stateDir` | `${XDG_STATE_HOME:-~/.local/state}/skydeck` | `spool/`, `hook.log`; `locks/` is created but unused (resume locks are in the database, 7.6). |
 | `configDir` | `${XDG_CONFIG_HOME:-~/.config}/skydeck` | `config.json`. |
 | `claudeHome` | the configuration key `claudeHome`, else `$CLAUDE_CONFIG_DIR`, else `~/.claude` | Claude Code's own files. |
 

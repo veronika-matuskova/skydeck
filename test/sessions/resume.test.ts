@@ -1,0 +1,682 @@
+import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { test } from 'node:test';
+
+import { buildResumeCommand } from '../../src/claude/launch.ts';
+import { ResumeRefusedError, UsageError } from '../../src/platform/errors.ts';
+import { NS_PER_SECOND } from '../../src/platform/time.ts';
+import type { Ns } from '../../src/platform/types.ts';
+import type { ListRow } from '../../src/sessions/list.ts';
+import { refresh } from '../../src/sessions/refresh.ts';
+import {
+  LOCK_TTL_NS,
+  acquireLock,
+  checkResumable,
+  lockKey,
+  prepareNew,
+  prepareResume,
+  sweepLocks,
+} from '../../src/sessions/resume.ts';
+import type { DerivedSession, Holder } from '../../src/sessions/types.ts';
+import type { Store } from '../../src/store/store.ts';
+import { deckWith, testDeck } from '../helpers/deck.ts';
+import type { TestDeck } from '../helpers/deck.ts';
+import { ds, meta, rowOf } from '../helpers/derived.ts';
+import { BOOT_A, S1, S2, S3, SEC, T0 } from '../helpers/platform.ts';
+
+const UUID1 = '00000000-0000-4000-8000-000000000001';
+
+function holder(pid: number, sinceNs: Ns = T0): Holder {
+  return { process: { bootId: BOOT_A, pid, procStart: 51234567 }, sinceNs, live: null };
+}
+
+/** A not-running session S1 in an existing directory, with a transcript. */
+function dead(d: TestDeck, over: Partial<DerivedSession> = {}): DerivedSession {
+  return ds({ id: S1, dir: d.sandbox.home, ...over });
+}
+
+function running(d: TestDeck, pids: number[]): DerivedSession {
+  return dead(d, { state: 'working', holders: pids.map((pid) => holder(pid)) });
+}
+
+/** The message of the ResumeRefusedError `fn` throws; fails when it throws nothing or something else. */
+function refusal(fn: () => unknown): string {
+  try {
+    fn();
+  } catch (error) {
+    assert.ok(error instanceof ResumeRefusedError, `not a ResumeRefusedError: ${String(error)}`);
+    assert.equal(error.exitCode, 4);
+    return error.message;
+  }
+  throw new assert.AssertionError({ message: 'nothing was refused' });
+}
+
+/** The value of the session's resume lock, null when there is none. */
+function lockOf(d: TestDeck, sessionId: string): string | null {
+  return d.deck.store.getKv(lockKey(sessionId));
+}
+
+function writeLock(d: TestDeck, sessionId: string, value: string): void {
+  d.deck.store.setKv(lockKey(sessionId), value);
+}
+
+function startEvent(d: TestDeck, sessionId: string, timeNs: Ns): void {
+  d.deck.store.insertEvent({
+    spoolName: `${timeNs}-4242-${sessionId}.ev`,
+    timeNs,
+    kind: 'start',
+    detail: 'resume',
+    rawDetail: 'resume',
+    sessionId,
+    bootId: BOOT_A,
+    pid: 4242,
+    procStart: 51234567,
+    cwd: d.sandbox.home,
+    argv: ['claude'],
+    name: null,
+    payload: null,
+  });
+}
+
+/** What node:sqlite throws when the database is locked (SQLITE_BUSY = 5). */
+const locked = (): Error =>
+  Object.assign(new Error('database is locked'), { code: 'ERR_SQLITE_ERROR', errcode: 5 });
+
+/**
+ * The deck with its store watched: `depths` gets, for every kv read, write and delete, how many
+ * store transactions were open at that moment.
+ */
+function watched(d: TestDeck): {
+  deck: typeof d.deck;
+  depths: number[];
+  transactions: () => number;
+} {
+  const store = d.deck.store;
+  const depths: number[] = [];
+  let depth = 0;
+  let count = 0;
+  const deck = deckWith(d.deck, {
+    store: {
+      transaction<T>(fn: () => T): T {
+        depth++;
+        count++;
+        try {
+          return store.transaction(fn);
+        } finally {
+          depth--;
+        }
+      },
+      getKv: (key) => (depths.push(depth), store.getKv(key)),
+      setKv: (key, value) => (depths.push(depth), store.setKv(key, value)),
+      deleteKv: (key) => (depths.push(depth), store.deleteKv(key)),
+      kvEntries: (prefix) => (depths.push(depth), store.kvEntries(prefix)),
+    } satisfies Partial<Store>,
+  });
+  return { deck, depths, transactions: () => count };
+}
+
+// --- checkResumable ----------------------------------------------------------------------------------
+
+test('checkResumable refuses a running session, naming its process', (t) => {
+  const d = testDeck(t);
+  assert.equal(
+    refusal(() => checkResumable(rowOf(running(d, [4242])), d.platform.files)),
+    '0b5f3c1e is running (pid 4242)',
+  );
+});
+
+test('checkResumable names every holder, latest first', (t) => {
+  const d = testDeck(t);
+  assert.equal(
+    refusal(() => checkResumable(rowOf(running(d, [4343, 4242])), d.platform.files)),
+    '0b5f3c1e is running (pid 4343, pid 4242)',
+  );
+});
+
+test('checkResumable refuses a session without a transcript', (t) => {
+  const d = testDeck(t);
+  assert.equal(
+    refusal(() =>
+      checkResumable(
+        rowOf(ds({ id: S1, dir: d.sandbox.home, transcript: null })),
+        d.platform.files,
+      ),
+    ),
+    '0b5f3c1e has no transcript',
+  );
+});
+
+test('checkResumable refuses an expired session', (t) => {
+  const d = testDeck(t);
+  const session = ds({
+    id: S1,
+    dir: d.sandbox.home,
+    transcript: { missingSinceNs: T0 },
+    marks: ['expired'],
+  });
+  assert.equal(
+    refusal(() => checkResumable(rowOf(session), d.platform.files)),
+    '0b5f3c1e has expired: its transcript is gone',
+  );
+});
+
+test('checkResumable refuses a session whose directory is gone', (t) => {
+  const d = testDeck(t);
+  assert.equal(
+    refusal(() => checkResumable(rowOf(dead(d, { dir: '/gone' })), d.platform.files)),
+    '0b5f3c1e: directory /gone no longer exists',
+  );
+});
+
+test('checkResumable refuses a session whose directory is a file now', (t) => {
+  const d = testDeck(t);
+  const file = join(d.sandbox.root, 'a-file');
+  writeFileSync(file, '');
+  assert.equal(
+    refusal(() => checkResumable(rowOf(dead(d, { dir: file })), d.platform.files)),
+    `0b5f3c1e: directory ${file} no longer exists`,
+  );
+});
+
+test('checkResumable refuses a session whose directory is not known', (t) => {
+  const d = testDeck(t);
+  assert.equal(
+    refusal(() => checkResumable(rowOf(dead(d, { dir: null })), d.platform.files)),
+    '0b5f3c1e: its project directory is not known',
+  );
+});
+
+test('checkResumable refuses a directory that is not an absolute path', (t) => {
+  const d = testDeck(t);
+  assert.equal(
+    refusal(() => checkResumable(rowOf(dead(d, { dir: 'relative/dir' })), d.platform.files)),
+    '0b5f3c1e: directory relative/dir is not an absolute path',
+  );
+});
+
+test('checkResumable refuses a directory it cannot look at, with the reason', (t) => {
+  const d = testDeck(t);
+  const files = {
+    ...d.platform.files,
+    stat: (): never => {
+      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    },
+  };
+  assert.equal(
+    refusal(() => checkResumable(rowOf(dead(d)), files)),
+    `0b5f3c1e: directory ${d.sandbox.home} cannot be checked (EACCES)`,
+  );
+});
+
+test('checkResumable checks the directory of the session, not the display text of the row', (t) => {
+  const d = testDeck(t);
+  const dir = join(d.sandbox.root, 'with\ttab');
+  mkdirSync(dir);
+  const row = rowOf(dead(d, { dir }));
+  assert.notEqual(row.dir, dir); // sanitised for display
+  checkResumable(row, d.platform.files);
+});
+
+test('checkResumable refuses a running session before anything else', (t) => {
+  const d = testDeck(t);
+  const session = ds({
+    id: S1,
+    dir: '/gone',
+    transcript: null,
+    state: 'running',
+    holders: [holder(4242)],
+  });
+  assert.equal(
+    refusal(() => checkResumable(rowOf(session), d.platform.files)),
+    '0b5f3c1e is running (pid 4242)',
+  );
+});
+
+test('checkResumable lets a dead session with an existing directory through', (t) => {
+  const d = testDeck(t);
+  checkResumable(rowOf(dead(d)), d.platform.files);
+});
+
+// --- lockKey, acquireLock --------------------------------------------------------------------------
+
+test('LOCK_TTL_NS is 60 seconds', () => {
+  assert.equal(LOCK_TTL_NS, 60n * NS_PER_SECOND);
+});
+
+test('lockKey is the kv key resume_lock:<id>', () => {
+  assert.equal(lockKey(S1), `resume_lock:${S1}`);
+});
+
+test('lockKey refuses anything but a session id', () => {
+  for (const bad of ['../x', S1.toUpperCase(), `${S1}/x`, '']) {
+    assert.throws(() => lockKey(bad), RangeError);
+  }
+});
+
+test('acquireLock stores the lock with the time as its value', (t) => {
+  const d = testDeck(t);
+  acquireLock(d.deck, S1);
+  assert.equal(lockOf(d, S1), `${T0}`);
+});
+
+test('acquireLock refuses within 60 s, says how long to wait and leaves the lock as it is', (t) => {
+  const d = testDeck(t);
+  acquireLock(d.deck, S1);
+  d.clock.setNs(T0 + 10n * SEC);
+  assert.equal(
+    refusal(() => acquireLock(d.deck, S1)),
+    '0b5f3c1e is being resumed (10 s ago); try again in 50 s',
+  );
+  assert.equal(lockOf(d, S1), `${T0}`);
+});
+
+test('acquireLock rounds the age down and the wait up', (t) => {
+  const d = testDeck(t);
+  acquireLock(d.deck, S1);
+  d.clock.setNs(T0 + 59n * SEC + 500_000_000n);
+  assert.equal(
+    refusal(() => acquireLock(d.deck, S1)),
+    '0b5f3c1e is being resumed (59 s ago); try again in 1 s',
+  );
+});
+
+test('acquireLock replaces a lock older than 60 s', (t) => {
+  const d = testDeck(t);
+  acquireLock(d.deck, S1);
+  d.clock.setNs(T0 + 61n * SEC);
+  acquireLock(d.deck, S1);
+  assert.equal(lockOf(d, S1), `${T0 + 61n * SEC}`);
+});
+
+test('acquireLock replaces a lock exactly 60 s old', (t) => {
+  const d = testDeck(t);
+  acquireLock(d.deck, S1);
+  d.clock.setNs(T0 + 60n * SEC);
+  acquireLock(d.deck, S1);
+  assert.equal(lockOf(d, S1), `${T0 + 60n * SEC}`);
+});
+
+test('acquireLock replaces a lock when the session started at or after the lock', (t) => {
+  for (const startNs of [T0, T0 + 2n * SEC]) {
+    const d = testDeck(t);
+    acquireLock(d.deck, S1);
+    startEvent(d, S1, startNs);
+    d.clock.setNs(T0 + 5n * SEC);
+    acquireLock(d.deck, S1);
+    assert.equal(lockOf(d, S1), `${T0 + 5n * SEC}`);
+  }
+});
+
+test('acquireLock keeps a lock when the session started before it, or another one started', (t) => {
+  const d = testDeck(t);
+  acquireLock(d.deck, S1);
+  startEvent(d, S1, T0 - 1n);
+  startEvent(d, S2, T0 + SEC);
+  d.clock.setNs(T0 + 5n * SEC);
+  assert.match(
+    refusal(() => acquireLock(d.deck, S1)),
+    /being resumed \(5 s ago\)/,
+  );
+});
+
+test('acquireLock locks each session on its own', (t) => {
+  const d = testDeck(t);
+  acquireLock(d.deck, S1);
+  acquireLock(d.deck, S2);
+  assert.equal(lockOf(d, S2), `${T0}`);
+});
+
+test('acquireLock replaces a lock whose value is not a time', (t) => {
+  for (const value of ['', 'soon', '12x', '-5', ' 1']) {
+    const d = testDeck(t);
+    writeLock(d, S1, value);
+    acquireLock(d.deck, S1);
+    assert.equal(lockOf(d, S1), `${T0}`, JSON.stringify(value));
+  }
+});
+
+test('acquireLock treats a lock dated a little in the future as fresh, one far ahead as stale', (t) => {
+  const d = testDeck(t);
+  writeLock(d, S1, `${T0 + 10n * SEC}`);
+  assert.equal(
+    refusal(() => acquireLock(d.deck, S1)),
+    '0b5f3c1e is being resumed (0 s ago); try again in 70 s',
+  );
+  writeLock(d, S1, `${T0 + 60n * SEC}`);
+  acquireLock(d.deck, S1);
+  assert.equal(lockOf(d, S1), `${T0}`);
+});
+
+test('acquireLock reads and writes the lock inside one transaction', (t) => {
+  const d = testDeck(t);
+  writeLock(d, S1, `${T0 - 120n * SEC}`);
+  const w = watched(d);
+  acquireLock(w.deck, S1);
+  assert.equal(w.transactions(), 1);
+  assert.ok(w.depths.length >= 2, String(w.depths));
+  assert.ok(
+    w.depths.every((depth) => depth === 1),
+    String(w.depths),
+  );
+  d.clock.setNs(T0 + SEC);
+  refusal(() => acquireLock(w.deck, S1));
+  assert.equal(w.transactions(), 2);
+  assert.ok(
+    w.depths.every((depth) => depth === 1),
+    String(w.depths),
+  );
+});
+
+test('acquireLock lets a failure of the database through', (t) => {
+  const d = testDeck(t);
+  const failure = locked();
+  const deck = deckWith(d.deck, {
+    store: {
+      getKv(): string | null {
+        throw failure;
+      },
+    },
+  });
+  assert.throws(() => acquireLock(deck, S1), failure);
+});
+
+// --- sweepLocks ------------------------------------------------------------------------------------
+
+test('sweepLocks removes stale locks, keeps fresh ones and counts what it removed', (t) => {
+  const d = testDeck(t);
+  writeLock(d, S1, `${T0 - 61n * SEC}`); // too old
+  writeLock(d, S2, `${T0 - 5n * SEC}`); // followed by a start
+  startEvent(d, S2, T0 - 2n * SEC);
+  writeLock(d, S3, `${T0 - 5n * SEC}`); // fresh
+  assert.equal(sweepLocks(d.deck), 2);
+  assert.equal(lockOf(d, S1), null);
+  assert.equal(lockOf(d, S2), null);
+  assert.equal(lockOf(d, S3), `${T0 - 5n * SEC}`);
+});
+
+test('sweepLocks removes a lock whose value is not a time, and one far in the future', (t) => {
+  const d = testDeck(t);
+  writeLock(d, S1, 'soon');
+  writeLock(d, S2, `${T0 + 60n * SEC}`);
+  writeLock(d, S3, `${T0 + 59n * SEC}`);
+  assert.equal(sweepLocks(d.deck), 2);
+  assert.deepEqual(
+    d.deck.store.kvEntries('resume_lock:').map((entry) => entry.key),
+    [lockKey(S3)],
+  );
+});
+
+test('sweepLocks leaves every other kv entry alone', (t) => {
+  const d = testDeck(t);
+  d.deck.store.setKv('settings_hash', 'abc');
+  d.deck.store.setKv('first_scan_done', '1');
+  assert.equal(sweepLocks(d.deck), 0);
+  assert.equal(d.deck.store.getKv('settings_hash'), 'abc');
+  assert.equal(d.deck.store.getKv('first_scan_done'), '1');
+});
+
+test('sweepLocks reads again and removes inside one transaction', (t) => {
+  const d = testDeck(t);
+  writeLock(d, S1, `${T0 - 61n * SEC}`);
+  writeLock(d, S2, `${T0 - 61n * SEC}`);
+  const w = watched(d);
+  assert.equal(sweepLocks(w.deck), 2);
+  assert.equal(w.transactions(), 1);
+  // A look first (outside), then, inside the transaction, the list again and every removal.
+  assert.deepEqual(w.depths, [0, 1, 1, 1]);
+});
+
+test('sweepLocks without a stale lock takes no write transaction', (t) => {
+  const d = testDeck(t);
+  writeLock(d, S1, `${T0 - 5n * SEC}`);
+  const w = watched(d);
+  assert.equal(sweepLocks(w.deck), 0);
+  assert.equal(w.transactions(), 0);
+  assert.equal(lockOf(d, S1), `${T0 - 5n * SEC}`);
+});
+
+test('sweepLocks keeps a lock that became fresh between its look and its transaction', (t) => {
+  const d = testDeck(t);
+  writeLock(d, S1, `${T0 - 61n * SEC}`);
+  const store = d.deck.store;
+  let looks = 0;
+  const deck = deckWith(d.deck, {
+    store: {
+      kvEntries(prefix: string) {
+        if (++looks === 2) {
+          store.setKv(lockKey(S1), `${T0}`); // another resume took it over meanwhile
+        }
+        return store.kvEntries(prefix);
+      },
+    },
+  });
+  assert.equal(sweepLocks(deck), 0);
+  assert.equal(lockOf(d, S1), `${T0}`);
+});
+
+test('sweepLocks lets a failure of the database through', (t) => {
+  const d = testDeck(t);
+  writeLock(d, S1, `${T0 - 5n * SEC}`);
+  const failure = locked();
+  const deck = deckWith(d.deck, {
+    store: {
+      hasStartSince(): boolean {
+        throw failure;
+      },
+    },
+  });
+  assert.throws(() => sweepLocks(deck), failure);
+  assert.equal(lockOf(d, S1), `${T0 - 5n * SEC}`);
+});
+
+test('refresh sweeps the locks at its end', (t) => {
+  const d = testDeck(t);
+  writeLock(d, S1, `${T0 - 61n * SEC}`);
+  refresh(d.deck);
+  assert.equal(lockOf(d, S1), null);
+});
+
+test('no lock is a file: the locks directory stays empty', (t) => {
+  const d = testDeck(t);
+  acquireLock(d.deck, S1);
+  mkdirSync(d.deck.places.locksDir, { recursive: true });
+  writeFileSync(join(d.deck.places.locksDir, `${S2}.lock`), `${T0 - 600n * SEC}\n`);
+  assert.equal(sweepLocks(d.deck), 0); // a file there is not a lock any more
+  assert.equal(lockOf(d, S1), `${T0}`);
+});
+
+// --- prepareResume ---------------------------------------------------------------------------------
+
+function rowWith(d: TestDeck, session: DerivedSession, label: string | null = null): ListRow {
+  return rowOf(session, label === null ? {} : { metas: [meta(S1, { label })] });
+}
+
+test('prepareResume builds the command and takes the lock', (t) => {
+  const d = testDeck(t);
+  const launch = ['claude', '--model', 'opus'];
+  const prepared = prepareResume(d.deck, rowWith(d, dead(d, { launch }), 'fix'));
+  assert.deepEqual(prepared, {
+    sessionId: S1,
+    cwd: d.sandbox.home,
+    argv: buildResumeCommand({ claudeCommand: 'claude', launch, sessionId: S1, label: 'fix' }).argv,
+    flagsKnown: true,
+    unknownFlags: [],
+    kind: 'resume',
+  });
+  assert.deepEqual(prepared.argv, ['claude', '--resume', S1, '-n', 'fix', '--model', 'opus']);
+  assert.equal(lockOf(d, S1), `${T0}`);
+});
+
+test('prepareResume runs the configured program', (t) => {
+  const d = testDeck(t, { config: { claudeCommand: '/opt/claude/bin/claude' } });
+  const prepared = prepareResume(d.deck, rowWith(d, dead(d, { launch: ['claude'] })));
+  assert.deepEqual(prepared.argv, ['/opt/claude/bin/claude', '--resume', S1]);
+});
+
+test('prepareResume names the flags it cannot pass on', (t) => {
+  const d = testDeck(t);
+  const launch = ['claude', '--frob', 'x', '--model', 'opus'];
+  const prepared = prepareResume(d.deck, rowWith(d, dead(d, { launch })));
+  assert.deepEqual(prepared.argv, ['claude', '--resume', S1, '--model', 'opus']);
+  assert.deepEqual(prepared.unknownFlags, ['--frob']);
+  assert.equal(prepared.flagsKnown, true);
+});
+
+test('prepareResume of a session without a launch command: flags unknown, none named', (t) => {
+  const d = testDeck(t);
+  const prepared = prepareResume(d.deck, rowWith(d, dead(d, { launch: null })));
+  assert.deepEqual(prepared.argv, ['claude', '--resume', S1]);
+  assert.equal(prepared.flagsKnown, false);
+  assert.deepEqual(prepared.unknownFlags, []);
+});
+
+test('prepareResume keeps a permission flag the session had, and never adds one', (t) => {
+  const d = testDeck(t);
+  const kept = prepareResume(
+    d.deck,
+    rowWith(d, dead(d, { launch: ['claude', '--permission-mode', 'plan'] })),
+  );
+  assert.deepEqual(kept.argv, ['claude', '--resume', S1, '--permission-mode', 'plan']);
+  d.clock.setNs(T0 + 61n * SEC);
+  const none = prepareResume(d.deck, rowWith(d, dead(d, { launch: ['claude'] })));
+  assert.deepEqual(none.argv, ['claude', '--resume', S1]);
+});
+
+test('prepareResume refuses a running session and takes no lock', (t) => {
+  const d = testDeck(t);
+  assert.match(
+    refusal(() => prepareResume(d.deck, rowWith(d, running(d, [4242])))),
+    /running/,
+  );
+  assert.equal(lockOf(d, S1), null);
+});
+
+test('prepareResume refuses a session whose directory is gone and takes no lock', (t) => {
+  const d = testDeck(t);
+  refusal(() => prepareResume(d.deck, rowWith(d, dead(d, { dir: '/gone' }))));
+  assert.equal(lockOf(d, S1), null);
+});
+
+test('prepareResume guards before it locks: a stale lock of a running session stays as it is', (t) => {
+  const d = testDeck(t);
+  const stale = `${T0 - 120n * SEC}`;
+  writeLock(d, S1, stale);
+  assert.equal(
+    refusal(() => prepareResume(d.deck, rowWith(d, running(d, [4242])))),
+    '0b5f3c1e is running (pid 4242)',
+  );
+  assert.equal(lockOf(d, S1), stale);
+});
+
+test('prepareResume refuses a second resume within 60 s', (t) => {
+  const d = testDeck(t);
+  prepareResume(d.deck, rowWith(d, dead(d)));
+  d.clock.setNs(T0 + 30n * SEC);
+  assert.equal(
+    refusal(() => prepareResume(d.deck, rowWith(d, dead(d)))),
+    '0b5f3c1e is being resumed (30 s ago); try again in 30 s',
+  );
+});
+
+// --- prepareNew ------------------------------------------------------------------------------------
+
+test('prepareNew stores the cleaned label and group and builds the command', (t) => {
+  const d = testDeck(t);
+  const prepared = prepareNew(d.deck, { label: ' x ', group: 'G', extra: ['--model', 'opus'] });
+  assert.deepEqual(prepared, {
+    sessionId: UUID1,
+    cwd: d.platform.cwd,
+    argv: ['claude', '--session-id', UUID1, '-n', 'x', '--model', 'opus'],
+    flagsKnown: true,
+    unknownFlags: [],
+    kind: 'new',
+  });
+  const stored = d.deck.store.meta(UUID1);
+  assert.equal(stored?.label, 'x');
+  assert.equal(stored?.group, 'G');
+});
+
+test('prepareNew without a label or group stores nothing and passes no name', (t) => {
+  const d = testDeck(t, { config: { claudeCommand: 'cc' } });
+  const prepared = prepareNew(d.deck, { label: null, group: null, extra: [] });
+  assert.deepEqual(prepared.argv, ['cc', '--session-id', UUID1]);
+  assert.deepEqual(d.deck.store.allMeta(), []);
+});
+
+test('prepareNew refuses a bad label or group before it stores anything', (t) => {
+  const d = testDeck(t);
+  assert.throws(() => prepareNew(d.deck, { label: '-x', group: 'G', extra: [] }), UsageError);
+  assert.throws(() => prepareNew(d.deck, { label: 'x', group: 'a\nb', extra: [] }), UsageError);
+  assert.deepEqual(d.deck.store.allMeta(), []);
+});
+
+test('prepareNew takes no lock', (t) => {
+  const d = testDeck(t);
+  prepareNew(d.deck, { label: null, group: null, extra: [] });
+  assert.deepEqual(d.deck.store.kvEntries('resume_lock:'), []);
+});
+
+/** The UsageError prepareNew throws for these extra flags; nothing may be stored. */
+function refusedExtra(d: TestDeck, extra: string[]): string {
+  try {
+    prepareNew(d.deck, { label: 'x', group: 'G', extra });
+  } catch (error) {
+    assert.ok(error instanceof UsageError, `not a UsageError: ${String(error)}`);
+    assert.deepEqual(d.deck.store.allMeta(), []);
+    return error.message;
+  }
+  throw new assert.AssertionError({ message: `${JSON.stringify(extra)} was not refused` });
+}
+
+test('prepareNew refuses a flag that resumes or continues a session: -r <id>, -c', (t) => {
+  const d = testDeck(t);
+  assert.match(refusedExtra(d, ['-r', S1]), /^cannot pass -r to claude:/);
+  assert.match(refusedExtra(d, ['--model', 'opus', '-c']), /cannot pass -c to claude/);
+  assert.match(refusedExtra(d, ['--resume']), /cannot pass --resume to claude/);
+  assert.match(refusedExtra(d, [`-r${S1}`]), /cannot pass -r to claude/);
+});
+
+test('prepareNew refuses such a flag inside a cluster of short flags, naming the cluster', (t) => {
+  const d = testDeck(t);
+  assert.match(refusedExtra(d, ['-cp']), /cannot pass -cp \(--continue\) to claude/);
+  assert.match(refusedExtra(d, ['-pc']), /cannot pass -pc \(--continue\) to claude/);
+});
+
+test('prepareNew refuses --session-id=<uuid> and the other flags on the removed list', (t) => {
+  const d = testDeck(t);
+  assert.match(refusedExtra(d, [`--session-id=${S1}`]), /cannot pass --session-id to claude/);
+  for (const flag of [
+    '--fork-session',
+    '--teleport',
+    '--from-pr',
+    '-n',
+    '--worktree',
+    '--prefill',
+  ]) {
+    assert.match(
+      refusedExtra(d, [flag, ...(flag === '-n' || flag === '--prefill' ? ['v'] : [])]),
+      new RegExp(`cannot pass ${flag} to claude`),
+    );
+  }
+});
+
+test('prepareNew passes other flags and a prompt on as they are', (t) => {
+  const d = testDeck(t);
+  const prepared = prepareNew(d.deck, {
+    label: null,
+    group: null,
+    extra: ['--model', 'x', 'fix the bug', '--frob', '--', '-r'],
+  });
+  assert.deepEqual(prepared.argv, [
+    'claude',
+    '--session-id',
+    UUID1,
+    '--model',
+    'x',
+    'fix the bug',
+    '--frob',
+    '--',
+    '-r',
+  ]);
+});
