@@ -140,7 +140,7 @@ Each is binding for the implementer. The last column names the task that records
 | D15 | The WezTerm adapter runs `wezterm cli --no-auto-start spawn`; when `wezterm` is not found and `$WSL_DISTRO_NAME` is set, it retries with `wezterm.exe`. | 13 "Open": tabs from WSL. | 7 (7.6) |
 | D16 | The resume lock stores its creation time (ns, decimal) as content; age is computed from that, not from mtime. Locks are swept at the end of every refresh. | Fake clock in tests. | 16 (7.6) |
 | D17 | `--all` restore entries are preselected relative to the last event of *their own* boot. | 7.8 defines it for the default set only. | 18 (7.8) |
-| D18 | Several-value flags consume following arguments up to the next one starting with `-` (as Claude Code's own parser does); `--flag=value` consumes nothing more; `--` ends the flags and everything after it is positional. | 7.6 "several values". | 2 (7.6) |
+| D18 | Arguments are read as Claude Code's own parser reads them: a several-value flag takes the next argument whatever it is and then the following ones up to the next flag-like one (starts with `-`, more than one character, so a lone `-` is a value); `--flag=value` consumes nothing more; a short flag takes the rest of its token as its value (`-rabc`), and a token of no-value short flags (`-cp`) is one flag; `--` ends the flags and everything after it is positional. A flag that is in no table is stored as its bare name and not passed on at resume: what follows it cannot be classified. | 7.6 "several values"; principle 4. | 2 (7.6, 5.3, principle 4) |
 | D19 | Restore's selection prompt: a numbered list, the user types numbers to toggle, an empty line confirms, `q` cancels (exit 5). | 7.8 says only "confirms or changes". | 18 (7.8) |
 | D20 | Install offers the first-run "mark as done" only once (kv `first_run_offered`). | 8 "Running it again changes nothing". | 17 (8) |
 | D21 | An `observed` event's time is the clock at reconcile; its launch command gets the same path-flag rewrite as a spooled one. | 5.4 is silent. | 8 (5.4) |
@@ -150,7 +150,7 @@ Each is binding for the implementer. The last column names the task that records
 | D25 | `src/sessions/` may import `src/github.ts` (`prKey`, `prLevel`, `chipFor` — pure functions): the scan attaches pull requests by key, the list model computes the chip. | Design 11 leaves `github` out of the sessions row. | 8 (11) |
 | D26 | `SKYDECK_HOME`, `XDG_*_HOME` and `CLAUDE_CONFIG_DIR` count only when non-empty and absolute — in `resolvePlaces`, in the hook and in the launcher alike. | 9.1 "the hook resolves stateDir by the same rule". | 1 (9.1) |
 | D27 | A session that is not running and has no transcript is not listed (nothing to resume; a session that never received a prompt has no transcript, design 14). | 7.2 would list it forever. | 11 (7.2) |
-| D28 | Resume removes the flags that choose which session is opened or where it runs — besides 7.6's list, `--teleport`, `--cloud`, `--desktop` with their values; flags that configure how it runs (including `--remote-control`) are kept. | 7.6 predates these flags. | 2 (7.6) |
+| D28 | Resume removes the flags that choose which session is opened or where it runs — besides 7.6's list, `--tmux` (it needs `-w`), `--teleport`, `--cloud`/`--remote`, `--desktop`, `--environment`/`--pool` with their values; flags that configure how it runs (including `--remote-control`) are kept. The deep-link flags (`--deep-link-origin`, `--deep-link-repo`, `--deep-link-last-fetch`, `--deep-link-cwd-b64`) and `--prefill`/`--prefill-b64` are removed too: they carry prompt text. `--rewind-files`, `--resume-session-at`, `--resume-drops-turn`, `--reply-on-resume`, `--attach-serve`, `--session-began-as-copy`, `--init-only` and `--handle-uri` are removed too (they choose a session or act once), and so are `--init` and `--maintenance` (one-time actions) and `--ref`, `--on-branch`, `--correlation-id` and `--forward-home-settings` (they only work with the cloud flags that are removed). `storableArgv` stores a launch command without the removed flags and positional arguments. | 7.6 predates these flags; principle 4. | 2 (7.6, and 5.3: what is stored) |
 
 ## 2. Contracts
 
@@ -755,7 +755,7 @@ export function openStore(path: string): Store;
 #### 2.5.1 `src/claude/procstat.ts`
 
 ```ts
-/** Field 22 (starttime) of a /proc/<pid>/stat line, counted after the LAST ')'. null when absent or not digits. */
+/** Field 22 (starttime) of a /proc/<pid>/stat line, counted after the LAST ')'. null when absent, not digits, or not a safe integer. */
 export function procStartFromStat(line: string): number | null;
 /** /proc/<pid>/cmdline bytes → arguments: UTF-8 decode, split on NUL, drop the last element when empty. [] for empty input. */
 export function argvFromCmdline(bytes: Uint8Array): string[];
@@ -772,7 +772,11 @@ export interface FlagSpec {
   path: boolean;                  // values are paths made absolute at ingest (5.3)
 }
 
-/** Claude Code 2.1.323 flags (from `claude --help`). */
+/**
+ * Claude Code 2.1.323 flags: every root flag the program declares, those hidden from
+ * `claude --help` included. `test/fixtures/claude/flags-2.1.323.json` is Claude Code's own table;
+ * a test compares the two.
+ */
 export const FLAGS: readonly FlagSpec[] = [
   // removed at resume (7.6)
   { names: ['-r', '--resume'], shape: 'optional', remove: true, path: false },
@@ -783,43 +787,152 @@ export const FLAGS: readonly FlagSpec[] = [
   { names: ['-w', '--worktree'], shape: 'optional', remove: true, path: false },
   { names: ['--bg', '--background'], shape: 'none', remove: true, path: false },
   { names: ['--from-pr'], shape: 'optional', remove: true, path: false },
-  // they choose which session is opened or where it runs (D28)
+  // they choose which session is opened or where it runs (D28); --tmux needs -w, which is removed
+  { names: ['--tmux'], shape: 'none', remove: true, path: false },
   { names: ['--teleport'], shape: 'optional', remove: true, path: false },
-  { names: ['--cloud'], shape: 'optional', remove: true, path: false },
+  { names: ['--cloud', '--remote'], shape: 'optional', remove: true, path: false },
   { names: ['--desktop'], shape: 'none', remove: true, path: false },
+  { names: ['--environment', '--pool'], shape: 'one', remove: true, path: false },
+  // they choose a session or act once (D28)
+  { names: ['--rewind-files'], shape: 'one', remove: true, path: false },
+  { names: ['--resume-session-at'], shape: 'one', remove: true, path: false },
+  { names: ['--resume-drops-turn'], shape: 'one', remove: true, path: false },
+  { names: ['--reply-on-resume'], shape: 'none', remove: true, path: false },
+  { names: ['--attach-serve'], shape: 'one', remove: true, path: false },
+  { names: ['--session-began-as-copy'], shape: 'one', remove: true, path: false },
+  { names: ['--init-only'], shape: 'none', remove: true, path: false },
+  { names: ['--handle-uri'], shape: 'one', remove: true, path: false },
+  // they only work with the cloud flags above, which are removed
+  { names: ['--ref'], shape: 'one', remove: true, path: false },
+  { names: ['--on-branch'], shape: 'one', remove: true, path: false },
+  { names: ['--correlation-id'], shape: 'one', remove: true, path: false },
+  { names: ['--forward-home-settings'], shape: 'one', remove: true, path: false },
+  // one-time actions
+  { names: ['--init'], shape: 'none', remove: true, path: false },
+  { names: ['--maintenance'], shape: 'none', remove: true, path: false },
+  // deep-link launches carry prompt text, which skydeck never stores (principle 4)
+  { names: ['--deep-link-origin'], shape: 'none', remove: true, path: false },
+  { names: ['--deep-link-repo'], shape: 'one', remove: true, path: false },
+  { names: ['--deep-link-last-fetch'], shape: 'one', remove: true, path: false },
+  { names: ['--deep-link-cwd-b64'], shape: 'one', remove: true, path: false },
+  { names: ['--prefill'], shape: 'one', remove: true, path: false },
+  { names: ['--prefill-b64'], shape: 'one', remove: true, path: false },
   // path flags (5.3), kept
   { names: ['--mcp-config'], shape: 'many', remove: false, path: true },
   { names: ['--add-dir'], shape: 'many', remove: false, path: true },
   { names: ['--settings'], shape: 'one', remove: false, path: true },
   { names: ['--plugin-dir'], shape: 'one', remove: false, path: true },
+  { names: ['--plugin-dir-no-mcp'], shape: 'one', remove: false, path: true },
+  { names: ['--system-prompt-file'], shape: 'one', remove: false, path: true },
+  { names: ['--append-system-prompt-file'], shape: 'one', remove: false, path: true },
+  { names: ['--append-subagent-system-prompt-file'], shape: 'one', remove: false, path: true },
   // kept, several values
   { names: ['--allowedTools', '--allowed-tools'], shape: 'many', remove: false, path: false },
   { names: ['--disallowedTools', '--disallowed-tools'], shape: 'many', remove: false, path: false },
-  { names: ['--tools'], shape: 'many', remove: false, path: false },
-  { names: ['--betas'], shape: 'many', remove: false, path: false },
-  { names: ['--file'], shape: 'many', remove: false, path: false },
+  ...['--tools', '--betas', '--file', '--channels', '--dangerously-load-development-channels'].map(
+    (name) => ({ names: [name], shape: 'many' as const, remove: false, path: false }),
+  ),
   // kept, one value
-  ...['--agent', '--agents', '--append-system-prompt', '--autocompact', '--debug-file', '--effort',
-      '--environment', '--fallback-model', '--input-format', '--json-schema', '--max-budget-usd',
-      '--model', '--output-format', '--permission-mode', '--permission-prompts',
-      '--permission-prompt-tool', '--plugin-url', '--remote-control-session-name-prefix',
-      '--setting-sources', '--system-prompt', '--system-prompt-snapshot']
-    .map((name) => ({ names: [name], shape: 'one' as const, remove: false, path: false })),
+  ...[
+    '--managed-settings',
+    '--setting-sources',
+    '--client-data-url',
+    '--watch-artifact',
+    '--watch-artifact-no-autoreact',
+    '--team-name',
+    '--agent-id',
+    '--agent-name',
+    '--agent-color',
+    '--parent-session-id',
+    '--lead-verify-key',
+    '--agent-type',
+    '--model',
+    '--agent',
+    '--routine',
+    '--effort',
+    '--fast-mode',
+    '--permission-mode',
+    '--inherit-permission-mode',
+    '--proactivity',
+    '--debug-file',
+    '--system-prompt',
+    '--append-system-prompt',
+    '--system-prompt-snapshot',
+    '--append-subagent-system-prompt',
+    '--plan-mode-instructions',
+    '--permission-prompt-tool',
+    '--permission-prompts',
+    '--json-schema',
+    '--fallback-model',
+    '--advisor',
+    '--agents',
+    '--plugin-url',
+    '--remote-control-session-name-prefix',
+    '--exec',
+    '-m',
+    '--sdk-url',
+    '--thinking',
+    '--thinking-display',
+    '--max-thinking-tokens',
+    '--max-turns',
+    '--max-budget-usd',
+    '--task-budget',
+    '--autocompact',
+    '--workload',
+    '--output-format',
+    '--input-format',
+    '--teammate-mode',
+    '--messaging-socket-path',
+    '--project-config-root',
+    '--runner-declares',
+  ].map((name) => ({ names: [name], shape: 'one' as const, remove: false, path: false })),
   // kept, optional value
   { names: ['-d', '--debug'], shape: 'optional', remove: false, path: false },
-  ...['--prompt-suggestions', '--remote-control']
-    .map((name) => ({ names: [name], shape: 'optional' as const, remove: false, path: false })),
+  { names: ['--remote-control', '--rc'], shape: 'optional', remove: false, path: false },
+  ...['--project', '--prompt-suggestions'].map((name) => ({
+    names: [name],
+    shape: 'optional' as const,
+    remove: false,
+    path: false,
+  })),
   // kept, no value
   { names: ['-p', '--print'], shape: 'none', remove: false, path: false },
   { names: ['-h', '--help'], shape: 'none', remove: false, path: false },
-  { names: ['-v', '--version'], shape: 'none', remove: false, path: false },
-  ...['--allow-dangerously-skip-permissions', '--ax-screen-reader', '--bare', '--brief', '--chrome',
-      '--dangerously-skip-permissions', '--disable-slash-commands',
-      '--exclude-dynamic-system-prompt-sections', '--forward-subagent-text', '--ide',
-      '--include-hook-events', '--include-partial-messages', '--no-chrome',
-      '--no-session-persistence', '--replay-user-messages', '--restricted', '--safe-mode',
-      '--strict-mcp-config', '--tmux', '--verbose']
-    .map((name) => ({ names: [name], shape: 'none' as const, remove: false, path: false })),
+  { names: ['-v', '--version', '-V'], shape: 'none', remove: false, path: false },
+  { names: ['-d2e', '--debug-to-stderr'], shape: 'none', remove: false, path: false },
+  ...[
+    '--verbose',
+    '--bare',
+    '--safe-mode',
+    '--include-hook-events',
+    '--include-partial-messages',
+    '--forward-subagent-text',
+    '--session-mirror',
+    '--await-claim',
+    '--await-initialize',
+    '--managed-settings-in-initialize',
+    '--dangerously-skip-permissions',
+    '--allow-dangerously-skip-permissions',
+    '--replay-user-messages',
+    '--host-auth-is-org-sign-in',
+    '--enable-auth-status',
+    '--restricted',
+    '--allow-other-models',
+    '--exclude-dynamic-system-prompt-sections',
+    '--include-unsupported-models',
+    '--no-session-persistence',
+    '--ide',
+    '--strict-mcp-config',
+    '--disable-slash-commands',
+    '--chrome',
+    '--no-chrome',
+    '--enable-auto-mode',
+    '--agents-view-if-allowed',
+    '--brief',
+    '--ax-screen-reader',
+    '--plan-mode-required',
+    '--hard-fail',
+  ].map((name) => ({ names: [name], shape: 'none' as const, remove: false, path: false })),
 ];
 
 export type ParsedArg =
@@ -827,13 +940,26 @@ export type ParsedArg =
   | { kind: 'positional'; tokens: [string] };
 
 /**
- * Parses arguments (WITHOUT the program name) with FLAGS (D18):
- * - `--name=value` (long flags only): one token, `values` [value], consumes nothing more;
+ * Parses arguments (WITHOUT the program name) with FLAGS (D18), the way Claude Code's parser does:
+ * - `--name=value` (long flags): one token, `values` [value], consumes nothing more; `name` is the
+ *   flag as written before the `=`;
+ * - a token that is a flag's own name is that flag, whatever its length (`-d2e`, `-V`); otherwise
+ *   a short flag is read letter by letter: a no-value flag lets the token go on (a cluster, `-cp`);
+ *   a value-taking flag ends it and takes the rest of the token, `=` included, as its value when
+ *   there is a rest (`-rabc` is `--resume abc`, one token, nothing more consumed), otherwise its
+ *   value follows by its shape; after a no-value flag, a '-' starts a new token, the rest of the
+ *   token with one more '-' in front (`-c-model opus` is `-c --model opus`; `-c-` is `-c --`, which
+ *   ends the flags: every later token is positional); a letter that is not in the table makes the
+ *   whole token an unknown flag, whose `name` is that letter alone (`-Zabc` is `-Z`, `-cZfix` is
+ *   `-Z`), or the long flag's name (`-c-frob` is `--frob`). `name` of a known flag is the token
+ *   without the glued value; `spec` is that of the first flag in the token with `remove: true`,
+ *   else of the last;
  * - shape none: no value; one: the next token whatever it is; optional: the next token if it
- *   exists and does not start with '-'; many: every following token up to the next one starting
- *   with '-';
- * - an unknown token starting with '-' is a flag with spec null; it takes the next token as its
- *   value when that exists and does not start with '-';
+ *   exists and is not flag-like; many: the next token whatever it is, then every following token up
+ *   to the next flag-like one (as Claude Code's parser does). A token is flag-like when it starts
+ *   with '-' and has more than one character: a lone '-' is a value;
+ * - an unknown flag-like token is a flag with spec null; it takes the next token as its value when
+ *   that exists and is not flag-like;
  * - '--' and every token after it are positionals;
  * - any other token is a positional.
  * Concatenating every `tokens` array gives back the input exactly.
@@ -843,17 +969,47 @@ export function parseLaunchArgs(args: readonly string[]): ParsedArg[];
 /**
  * 5.3: in a full launch command (program first), each value of a flag with `path: true` that is
  * relative is replaced by resolve(cwd, value) when `exists(resolved)` is true. For the `=` form the
- * token becomes `--flag=<absolute>`. Other tokens are returned unchanged. cwd null → unchanged.
+ * token becomes `--flag=<absolute>`. Other tokens are returned unchanged. cwd null → unchanged;
+ * so is a cwd that is not absolute, and an empty value (resolving against either would give the
+ * directory of the running process).
  */
 export function absolutizePathFlags(argv: readonly string[], cwd: string | null, exists: (path: string) => boolean): string[];
+
+/**
+ * What skydeck stores of a recorded launch command (5.3, principle 4): the program (first element)
+ * and the flags, with their values, that a resume keeps, in order. Positional arguments (an initial
+ * prompt), '--' and everything after it, and every flag with `remove: true` (with its values) are
+ * dropped, so a prompt reaches the database neither as a positional argument nor inside a removed
+ * flag such as `--prefill-b64`. A flag that is in no table is stored as its bare name (`--flag=value`
+ * as `--flag`; a short token with an unknown letter as that letter alone, `-cZfix` as `-Z`): what follows it cannot be classified, and
+ * skydeck never stores text it cannot classify; the name lets a resume say it was not passed on.
+ * [] for an empty command. buildResumeCommand gives the same result for a command and for
+ * storableArgv of it, and storableArgv(storableArgv(x)) equals storableArgv(x).
+ */
+export function storableArgv(argv: readonly string[]): string[];
+
+/**
+ * The names of the flags in a recorded or stored command (program first) that are in no table, in
+ * order, each once (`--flag=value` is `--flag`, `-cZfix` is `-Z`). A resume does not pass them on; `resume` and `show`
+ * say so. unknownFlags(storableArgv(x)) equals unknownFlags(x).
+ */
+export function unknownFlags(argv: readonly string[]): string[];
+
+/**
+ * Whether a recorded launch command (program first) has the print flag, alone or inside a cluster of
+ * short flags (`-cp`). A `-p` that is another flag's value, or after '--', is not the flag. Ask it of
+ * the RECORDED command: storableArgv drops a cluster that holds a removed flag (`-cp`) as a whole.
+ */
+export function isPrintRun(argv: readonly string[]): boolean;
 
 export interface ResumeCommand { argv: string[]; flagsKnown: boolean }
 /**
  * 7.6. `launch` is a recorded launch command (program first) or null.
  * Result: [claudeCommand, '--resume', sessionId, ...(label ? ['-n', label] : []),
  *          ...every kept token of launch.slice(1) in order].
- * Removed: flags with remove: true (with their values) and positionals. Unknown flags are kept with
- * their value. flagsKnown is false when launch is null.
+ * Removed: flags with remove: true (with their values), positionals, and flags that are in no table
+ * (with what follows them; unknownFlags names them). flagsKnown is false when launch is null. No
+ * permission flag is ever added.
  */
 export function buildResumeCommand(input: {
   claudeCommand: string; launch: readonly string[] | null; sessionId: string; label: string | null;
@@ -882,11 +1038,17 @@ export interface SpoolEvent {
   pid: number;                    // 0 when claude_pid is empty (D7)
   procStart: number | null;
   cwd: string | null;             // hook input cwd, else the pwd key (empty → null)
-  argv: string[] | null;          // SessionStart with a non-empty argv_b64 only, path flags absolute,
-                                  // NO positional arguments (an initial prompt is conversation text)
+  argv: string[] | null;          // SessionStart with a non-empty argv_b64 only: storableArgv of the
+                                  // recorded command with its path flags absolute — no positional
+                                  // arguments, no removed flags, unknown flags as bare names
+                                  // (prompt text; principle 4)
   name: string | null;            // SessionStart session_title
   payload: string;                // the hook input exactly as received
   entrypointEnv: string | null;   // empty → null
+  scripted: boolean;              // 5.3 "scripted runs": isPrintRun(recorded argv) — the command as
+                                  // recorded, before storableArgv drops `-cp` whole — or entrypointEnv
+                                  // non-null and not 'cli' (design 14: `claude -p` hooks see 'sdk-cli').
+                                  // An end event has no command: only entrypointEnv decides.
 }
 
 /** SessionStart.source → detail. Anything else → 'unknown'. */
@@ -911,17 +1073,13 @@ export class SpoolParseError extends Error {}
  * session_id, else session_env) is a UUID. The hook writes a value that contained a newline or a
  * carriage return as empty, and a claude_pid that is not all digits as empty (name part 0), so pwd,
  * session_env and entrypoint_env may be empty: empty means "unknown", never a valid value. The
- * launch command is normalised to flags and flag values: positional arguments are dropped before
- * anything is stored (design principle 4). Lines are split on '\n' only; a '\r' belongs to the value.
- * `exists` is used only by absolutizePathFlags.
+ * launch command is normalised: `argv` is storableArgv(absolutizePathFlags(recorded, cwd, exists)),
+ * so no positional argument, no removed flag (with its values) and no value of an unknown flag is
+ * stored (design principle 4).
+ * Lines are split on '\n' only; a '\r' belongs to the value. `scripted` is set as SpoolEvent says,
+ * from the command as recorded. `exists` is used only by absolutizePathFlags.
  */
 export function parseSpoolFile(name: string, content: string, exists: (path: string) => boolean): SpoolEvent;
-
-/**
- * 5.3 "scripted runs": true when argv contains the token '-p' or '--print', or when entrypointEnv
- * is non-null and not 'cli' (design 14: `claude -p` hooks see 'sdk-cli').
- */
-export function isScriptedRun(argv: readonly string[] | null, entrypointEnv: string | null): boolean;
 ```
 
 #### 2.5.4 `src/claude/live.ts`
@@ -1239,7 +1397,7 @@ export interface IngestResult { ingested: number; duplicates: number; bad: numbe
 export function ingestSpool(deck: Deck): IngestResult;
 
 // src/sessions/reconcile.ts
-/** 5.4. Inserts observed events (launch command without positional arguments); returns how many. */
+/** 5.4. Inserts observed events (launch command = storableArgv of the recorded one); returns how many. */
 export function reconcile(deck: Deck): { observed: number };
 
 // src/sessions/scan.ts
@@ -1388,10 +1546,10 @@ export function acquireLock(deck: Deck, sessionId: string): void;
 /** Removes locks that are stale by the same two rules. Returns how many. */
 export function sweepLocks(deck: Deck): number;
 
-export interface PreparedLaunch { sessionId: string; cwd: string; argv: string[]; flagsKnown: boolean }
-/** checkResumable, acquireLock, buildResumeCommand(config.claudeCommand, row.session.launch, id, row.label). */
+export interface PreparedLaunch { sessionId: string; cwd: string; argv: string[]; flagsKnown: boolean; unknownFlags: string[] }
+/** checkResumable, acquireLock, buildResumeCommand(config.claudeCommand, row.session.launch, id, row.label); `unknownFlags` is unknownFlags(row.session.launch) ([] without a launch command). */
 export function prepareResume(deck: Deck, row: ListRow): PreparedLaunch;
-/** 7.7: platform.uuid(), stores label/group (cleaned) as meta, buildNewCommand, cwd = platform.cwd. */
+/** 7.7: platform.uuid(), stores label/group (cleaned) as meta, buildNewCommand, cwd = platform.cwd; `flagsKnown` true, `unknownFlags` []. */
 export function prepareNew(deck: Deck, options: { label: string | null; group: string | null; extra: readonly string[] }): PreparedLaunch;
 ```
 
@@ -1571,7 +1729,9 @@ export function editNote(ctx: Context, deck: Deck, sessionId: string): Promise<v
  * return at once so the launcher can exec). On failure, or 'tab' without a tab adapter (D24),
  * prints the reason and the command ("cd -- <q dir> && <shellJoin argv>") on stderr and returns
  * EXIT.failure. Prints "skydeck: original flags unknown; resuming with defaults" first when
- * !prepared.flagsKnown.
+ * !prepared.flagsKnown, and, when prepared.unknownFlags is not empty, "skydeck: started with flags
+ * skydeck does not know, not passed on resume: <names>" (names sanitised, joined by one space), both
+ * on stderr and before it starts anything.
  */
 export function launchPrepared(ctx: Context, deck: Deck, prepared: PreparedLaunch, where: 'here' | 'tab' | null): Promise<number>;
 ```
@@ -1735,13 +1895,14 @@ export interface ListJson { version: 1; generatedAt: string; sessions: SessionJs
 export interface LinkJson { kind: LinkKind; from: string; to: string; at: string }
 export interface HolderJson { pid: number; bootId: string; procStart: number | null; since: string }
 export interface ShowJson extends SessionJson {
-  note: string | null; launch: string[] | null; links: LinkJson[]; holders: HolderJson[];
+  note: string | null; launch: string[] | null; unknownFlags: string[]; links: LinkJson[]; holders: HolderJson[];
 }
 ```
 
 Times are `isoFromNs`. `dir` is `""` when unknown. `sessions` is in list order (groups in order,
 rows in order). Output is `JSON.stringify(value, null, 2) + "\n"`. `show --json` adds, after
-`prs`: `note`, `launch` (`session.launch`), `links` (every link from or to the session, by
+`prs`: `note`, `launch` (`session.launch`), `unknownFlags` (`unknownFlags(session.launch)`, `[]` when
+there is no launch command), `links` (every link from or to the session, by
 time), `holders` (live holders). Version 1 is stable: later changes only add keys.
 
 ## 3. Tasks
@@ -1974,12 +2135,13 @@ whose home, `SKYDECK_HOME` and Claude home are inside the sandbox.
 
 ### Task 2: Pure helpers — `/proc` parsing, launch flags, pull-request keys
 
-**Depends on:** task 0 · **Wave:** 1 · **Design:** 5.3 (field 22, cmdline, path flags), 5.5, 7.3 (key), 7.6, 7.7 · **Contracts:** 2.5.1, 2.5.2, 2.6 (`PrKey`, `prKey`) · **Decisions:** D18, D28 (update design 7.6)
+**Depends on:** task 0 · **Wave:** 1 · **Design:** 5.3 (field 22, cmdline, path flags), 5.5, 7.3 (key), 7.6, 7.7 · **Contracts:** 2.5.1, 2.5.2, 2.6 (`PrKey`, `prKey`) · **Decisions:** D18, D28 (update design 7.6; 5.3 and principle 4 for what is stored)
 
 **Files**
 - Create: `src/claude/procstat.ts`, `src/claude/launch.ts`
 - Create: `src/github.ts` holding only `PrKey` and `prKey` (task 9 adds the rest of 2.6 to this file)
-- Modify: `docs/design.md` 7.6 (D18; D28: the removed-flags rule and the three added flags)
+- Create: `test/fixtures/claude/flags-2.1.323.json` (Claude Code's own option table: every spelling of every root flag with its shape, nothing else)
+- Modify: `docs/design.md` 7.6 (D18; D28: the removed-flags rule and the flags added to it; unknown flags), the sentence of 5.3 that says what is stored of the launch command, and the last sentence of principle 4
 - Test: `test/claude/procstat.test.ts`, `test/claude/launch.test.ts`, `test/github-key.test.ts`
 
 **Exported API**
@@ -2000,6 +2162,9 @@ export type ParsedArg =
   | { kind: 'positional'; tokens: [string] };
 export function parseLaunchArgs(args: readonly string[]): ParsedArg[];
 export function absolutizePathFlags(argv: readonly string[], cwd: string | null, exists: (path: string) => boolean): string[];
+export function storableArgv(argv: readonly string[]): string[];
+export function unknownFlags(argv: readonly string[]): string[];
+export function isPrintRun(argv: readonly string[]): boolean;
 export interface ResumeCommand { argv: string[]; flagsKnown: boolean }
 export function buildResumeCommand(input: { claudeCommand: string; launch: readonly string[] | null; sessionId: string; label: string | null }): ResumeCommand;
 export function buildNewCommand(input: { claudeCommand: string; sessionId: string; label: string | null; extra: readonly string[] }): string[];
@@ -2015,11 +2180,12 @@ export function buildNewCommand(input: { claudeCommand: string; sessionId: strin
 '4242 (my prog) S 4100 4242 4100 34816 4242 4194304 1 0 0 0 1 0 0 0 20 0 11 0 7 0 0'                → 7
 ''  → null        'garbage' → null        '4242 (claude) S 1 2 3' → null
 '4242 (claude) S 4100 4242 4100 34816 4242 4194304 1 0 0 0 1 0 0 0 20 0 11 0 x 0 0'                → null
+the same with field 22 = 9007199254740991 → 9007199254740991; = 9007199254740992 or 100000000000000000000 → null (not a safe integer)
 ```
 
 `argvFromCmdline` (bytes given as strings): `'claude\0--model\0opus\0'` → `['claude','--model','opus']`;
 `'claude\0x'` → `['claude','x']`; `'claude\0\0x\0'` → `['claude','','x']`; `''` → `[]`;
-`'claude\0-n\0čeština\0'` → `['claude','-n','čeština']`.
+`'claude\0-n\0čeština\0'` → `['claude','-n','čeština']`; `'claude\0--system-prompt\0\0'` → `['claude','--system-prompt','']`.
 
 `prKey` (test file `test/github-key.test.ts`)
 
@@ -2034,8 +2200,15 @@ null for: 'https://gitlab.com/o/r/pull/1', 'https://github.com/o/r/issues/1', 'h
 ```
 
 `FLAGS`: every name starts with `-` and appears once; the names with `path: true` are exactly
-`--mcp-config --add-dir --settings --plugin-dir`; the names with `remove: true` are exactly
-`-r --resume -c --continue --session-id --fork-session -n --name -w --worktree --bg --background --from-pr --teleport --cloud --desktop`.
+`--mcp-config --add-dir --settings --plugin-dir --plugin-dir-no-mcp --system-prompt-file --append-system-prompt-file --append-subagent-system-prompt-file`;
+the names with `remove: true` are exactly
+`-r --resume -c --continue --session-id --fork-session -n --name -w --worktree --tmux --bg --background --from-pr --teleport --cloud --remote --desktop --environment --pool --rewind-files --resume-session-at --resume-drops-turn --reply-on-resume --attach-serve --session-began-as-copy --init-only --handle-uri --ref --on-branch --correlation-id --forward-home-settings --init --maintenance --deep-link-origin --deep-link-repo --deep-link-last-fetch --deep-link-cwd-b64 --prefill --prefill-b64`;
+`--remote` shares its spec with `--cloud`, and `--pool` with `--environment`. The fixture
+`test/fixtures/claude/flags-2.1.323.json` is Claude Code 2.1.323's own table (every spelling of
+every root flag, hidden ones included, with its shape): FLAGS has every name of it with the same
+shape, and no name that is not in it. Hidden flags are looked at by shape: `--enable-auto-mode`
+takes no value, `--channels` and `--dangerously-load-development-channels` take several, `-d2e` is a
+flag of its own and not `-d` with a value, `--max-turns` takes one.
 
 `parseLaunchArgs` (input → tokens of each item; `F` flag with spec, `U` unknown flag, `P` positional). For every case, the concatenated tokens equal the input:
 
@@ -2045,6 +2218,10 @@ null for: 'https://gitlab.com/o/r/pull/1', 'https://github.com/o/r/issues/1', 'h
 ['-c']                             → F['-c']             values []
 ['--add-dir','a','b','--verbose']  → F['--add-dir','a','b'], F['--verbose']
 ['--add-dir','a','hello']          → F['--add-dir','a','hello']                       (D18)
+['--add-dir','-x','b','--verbose'] → F['--add-dir','-x','b'], F['--verbose']          (the first value is taken whatever it is)
+['--add-dir','--model','opus']     → F['--add-dir','--model','opus']                  (values ['--model','opus'])
+['--add-dir','a','-x','b']         → F['--add-dir','a'], U['-x','b']                  (from the second value on, a flag stops it)
+['--add-dir']                      → F['--add-dir']      values []
 ['-r']                             → F['-r']             values []
 ['-r','abc']                       → F['-r','abc']       values ['abc']
 ['-r','--model','x']               → F['-r'], F['--model','x']
@@ -2053,7 +2230,26 @@ null for: 'https://gitlab.com/o/r/pull/1', 'https://github.com/o/r/issues/1', 'h
 ['--','-p','x']                    → P['--'], P['-p'], P['x']
 ['hello world']                    → P['hello world']
 ['--model']                        → F['--model']        values []
+['-rabc']                          → F['-rabc']          values ['abc']     (glued value; name '-r')
+['-wfeat','fix the bug']           → F['-wfeat'], P['fix the bug']          (nothing more consumed)
+['-n=x','y']                       → F['-n=x']           values ['=x'], P['y']
+['-cp','x']                        → F['-cp'], P['x']                       (cluster of no-value flags)
+['-cn','foo']                      → F['-cn','foo']      values ['foo']     (cluster ending in a value flag)
+['-c-model','opus']                → F['-c-model','opus'] values ['opus']          (`-c` then `--model opus`)
+['-c-model=opus','x']              → F['-c-model=opus']  values ['opus'], P['x']
+['-c-','--model','opus']           → F['-c-'], P['--model'], P['opus']              (`-c` then `--`: the flags end)
+['-p-','x']                        → F['-p-'], P['x']
+['-c-frob','x']                    → U['-c-frob','x']    values ['x']               (name '--frob')
+['-n-foo','x']                     → F['-n-foo'], P['x']                            (the value of `-n` is '-foo')
+['-cnfoo','x']                     → F['-cnfoo'], P['x']                    (values ['foo'])
+['-cZ','x']                        → U['-cZ','x']                           (an unknown letter: unknown as a whole; its `name` is '-Z', and '-Zabc' is '-Z' too)
+['-d2e']                           → F['-d2e']           values []          (a flag's own name wins over the letters)
+['-']                              → P['-']
+['--add-dir','a','-','--verbose']  → F['--add-dir','a','-'], F['--verbose'] (a lone '-' is a value)
 ```
+
+The `spec` of a cluster is that of its first flag with `remove: true`, else of its last flag:
+`-pc`, `-rabc` and `-c-model` have `remove: true`, `-pv`, `-dv`, `-p-` and `-p-model` do not.
 
 `absolutizePathFlags` (`exists` = membership in a given set):
 
@@ -2066,6 +2262,9 @@ same, exists {}                                                             → 
 ['claude','--plugin-dir','./plug'], cwd '/p', exists {'/p/plug'}            → ['claude','--plugin-dir','/p/plug']
 ['claude','--model','opus'], cwd '/p', exists {'/p/opus'}                   → unchanged
 ['claude','--mcp-config','m.json'], cwd null                                → unchanged
+['claude','--system-prompt-file','s.md','--append-system-prompt-file=a.md','--plugin-dir-no-mcp','p','--append-subagent-system-prompt-file','x.md'], cwd '/p', exists always → every value absolute under /p
+['claude','--add-dir','a'], cwd 'p' (not absolute), exists always           → unchanged
+['claude','--add-dir',''], cwd '/p', exists always                          → unchanged   (an empty value; also '--add-dir=')
 ```
 
 `buildResumeCommand` (`claudeCommand 'claude'`, `sessionId S1`; `R = ['claude','--resume',S1]`;
@@ -2087,10 +2286,29 @@ same, label 'fix retry'                                            → [...R,'-n
 ['claude','fix the bug']                                           → R
 ['claude','--add-dir','/x','--model','opus','fix it']              → [...R,'--add-dir','/x','--model','opus']
 ['claude','--add-dir','/x','fix it']                               → [...R,'--add-dir','/x','fix it']   (D18)
-['claude','--frobnicate','v','prompt']                             → [...R,'--frobnicate','v']
+['claude','--frobnicate','v','prompt']                             → R   (a flag in no table is not passed on, nor what follows it)
+['claude','--model','opus','--frobnicate','--verbose']             → [...R,'--model','opus','--verbose']
 ['claude','--model=opus','--resume=abc']                           → [...R,'--model=opus']
 ['claude','--','-p']                                               → R
 ['claude','--continue','--worktree','w','--background','--resume=x','--name','n'] → R   (long forms)
+['claude','-rabc','--fork-session']                                → R   (glued short flags)
+['claude','-c-model','opus','--verbose']                           → [...R,'--verbose']   (`-c` is removed, so the token goes whole)
+['claude','-c-','--model','opus']                                  → R   (`-c --`: the rest is positional)
+['claude','-p-model','opus']                                       → [...R,'-p-model','opus']
+['claude','-p-','prompt']                                           → [...R,'-p-']
+['claude','-nfoo','--model','opus']                                → [...R,'--model','opus']
+['claude','-wfeat','fix the bug']                                  → R
+['claude','-cp','fix it']                                          → R   (a cluster with a removed flag is removed whole)
+['claude','-pv']                                                   → [...R,'-pv']
+['claude','-cZ','x']                                               → R   (unknown as a whole: not passed on)
+['claude','--rewind-files','m','--resume-session-at','m','--resume-drops-turn','x','--reply-on-resume','--attach-serve','a','--session-began-as-copy','b','--init-only','--handle-uri','u','--model','opus'] → [...R,'--model','opus']
+['claude','--enable-auto-mode','--channels','plugin:a@x','plugin:b@y','--max-turns','5','--thinking','enabled','-d2e','fix it'] → [...R, …the same flags and values]
+['claude','--cloud','--ref','main','--on-branch','b','--correlation-id','c','--forward-home-settings','h','--init','--maintenance','--model','opus'] → [...R,'--model','opus']
+['claude','--add-dir','-scratch','b','--model','opus']             → [...R,'--add-dir','-scratch','b','--model','opus']   (the first value is taken whatever it is)
+['claude','-']                                                     → R   (a lone '-' is a positional)
+['claude','--prefill-b64=Zml4','--deep-link-origin','--deep-link-repo=o/r','--deep-link-last-fetch','1','--deep-link-cwd-b64','L3A','--prefill','fix','--model','opus'] → [...R,'--model','opus']
+['claude','--remote','d','--environment','e','--pool','p','--tmux','-w','--model','opus'] → [...R,'--model','opus']
+['claude','--remote-control','rc']                                 → [...R,'--remote-control','rc']   (a different flag, kept)
 launch null, label null                                            → R, flagsKnown false
 launch null, label 'x'                                             → [...R,'-n','x'], flagsKnown false
 claudeCommand '/opt/claude', launch ['claude']                     → ['/opt/claude','--resume',S1]
@@ -2101,13 +2319,58 @@ Every flag of the table (a loop over `FLAGS`, each spelling): for a spec with `r
 launch `['claude', name, ...V]` gives `R`; with `remove: false` it gives `[...R, name, ...V]`, where
 `V` is `[]` for shape `none`, `['v']` for `one`, `optional` and `many`, and `['v1','v2']` as well for `many`.
 
+`storableArgv` (program first; the program is always kept, `[]` gives `[]`):
+
+```
+['claude','fix the bug']                                           → ['claude']
+['claude','--model','opus','-d','api','--add-dir','/x','/y','--verbose'] → unchanged   (one-, optional- and several-value flags keep their values)
+['claude','--model=opus','-dapi','prompt']                         → ['claude','--model=opus','-dapi']
+['claude','--add-dir','/x','fix it']                               → unchanged   (D18: the prompt is the flag's value)
+['claude','--frobnicate','v','prompt']                             → ['claude','--frobnicate']   (an unknown flag: its bare name only)
+['claude','--frobnicate=fix it','--model=opus']                    → ['claude','--frobnicate','--model=opus']
+['claude','-c-model','opus','--verbose']                           → ['claude','--verbose']
+['claude','-p-model','opus','prompt']                              → ['claude','-p-model','opus']
+['claude','-p-','--model','opus']                                  → ['claude','-p-']   (`-p --`: the rest is positional)
+['claude','-c-frob','x','--model','opus']                          → ['claude','--frob','--model','opus']
+['claude','-cZ','x','-Zabc','y']                                   → ['claude','-Z','-Z']   (an unknown letter: that letter alone)
+['claude','-cZfix the login bug','--model','opus','-Zsecret']      → ['claude','-Z','--model','opus','-Z']
+['claude','--model','opus','--','-p','text']                       → ['claude','--model','opus']
+['claude','--resume','abc','-n','my name','--prefill-b64=Zml4','--prefill','fix','--deep-link-repo','o/r','-wfeat','--model','opus','--cloud'] → ['claude','--model','opus']
+```
+
+Every flag of the table (a loop over `FLAGS`, each spelling, `V` as above): `['claude', name, ...V]`
+gives `['claude']` for `remove: true`, and itself for `remove: false`. The input is not modified.
+Over a list of launch commands (the cases above, with clusters, a lone `-`, `--`, deep-link flags):
+`buildResumeCommand` gives the same result for the command and for `storableArgv` of it, with and
+without a label; `storableArgv(storableArgv(x))` equals `storableArgv(x)`; the flags of
+`storableArgv(x)` that are in a table, minus the removed ones, are exactly `buildResumeCommand(x).argv.slice(3)`
+(no label); and `unknownFlags(storableArgv(x))` equals `unknownFlags(x)`.
+
+`unknownFlags` (program first): `['claude','--frob','x','--model','opus','--other=1','--frob','-Z','y']` →
+`['--frob','--other','-Z']`; `['claude','-cZ','x']` → `['-Z']`; only known flags, `['claude']` and `[]` → `[]`;
+the program and what follows `--` are never named.
+
+`isPrintRun` (program first): `['claude','-p','hi']`, `['claude','--print']`, `['claude','-cp','hi']`,
+`['claude','-pc']`, `['claude','-hp']` → true; `['claude']`, `[]`, `['claude','--model','opus','-c']`,
+`['claude','--system-prompt','-p']`, `['claude','--','-p']`, `['-p']` (the program), `['claude','-np']`
+(`-n` takes the rest of its token), `['claude','-pZ']` (an unknown letter) → false; and
+`isPrintRun(['claude','-cp','hi'])` is true while `isPrintRun(storableArgv(['claude','-cp','hi']))` is false;
+`['claude','-p-']`, `['claude','-p-model','opus']` and `['claude','-cp-']` → true; `['claude','-c-','-p']`, `['claude','-c-p']`
+and `['claude','-c-model','opus']` → false.
+
+A property test with a fixed seed (a small generator in the test file) builds 3000 random commands
+from the table's names, `--`, `-`, `''`, clusters (`-cp`, `-c-`, `-p-`, `-c-model`, …), glued short flags, unknown flags and plain words, and
+checks: the tokens of `parseLaunchArgs` give back the input; `storableArgv` twice equals once; the
+`resume` equivalence above; `unknownFlags` of stored equals of recorded; and that no positional, no
+removed flag and no value of an unknown flag survives in the stored command.
+
 `buildNewCommand`: `{ claudeCommand: 'claude', sessionId: S1, label: null, extra: [] }` →
 `['claude','--session-id',S1]`; `label 'x y', extra ['--model','opus']` →
 `['claude','--session-id',S1,'-n','x y','--model','opus']`.
 
 **Steps**
-- [ ] Write the three test files. `npm test` → new tests fail ("Cannot find module").
-- [ ] Implement the three source files; none of them imports anything from `src/`.
+- [ ] Write the three test files and the fixture. `npm test` → new tests fail ("Cannot find module").
+- [ ] Implement the three source files; none of them imports anything from `src/` (`launch.ts` uses `node:path` only).
 - [ ] `npm run check` → pass.
 - [ ] Commit `Add /proc parsing, the launch-flag table and pull-request keys`; open the PR.
 
@@ -2379,12 +2642,12 @@ export interface SpoolEvent {
   detail: 'startup' | 'resume' | 'clear' | 'compact' | 'fork' | 'unknown' | 'switch' | 'exit' | 'other';
   rawDetail: string | null; sessionId: string; bootId: string; pid: number; procStart: number | null;
   cwd: string | null; argv: string[] | null; name: string | null; payload: string; entrypointEnv: string | null;
+  scripted: boolean;
 }
 export const START_DETAILS: Readonly<Record<string, SpoolEvent['detail']>>;
 export const END_DETAILS: Readonly<Record<string, SpoolEvent['detail']>>;
 export class SpoolParseError extends Error {}
 export function parseSpoolFile(name: string, content: string, exists: (path: string) => boolean): SpoolEvent;  // throws SpoolParseError
-export function isScriptedRun(argv: readonly string[] | null, entrypointEnv: string | null): boolean;
 
 // test/helpers/spool.ts — used by tasks 8, 14, 18
 export interface SpoolFields {
@@ -2408,7 +2671,7 @@ export function hookInput(event: 'SessionStart' | 'SessionEnd', sessionId: strin
 **Test cases** (`parse(fields)` = `parseSpoolFile(spoolName(fields, 1), spoolText(fields), () => false)`)
 
 - The fixture `1794474000000000000-4242-1.ev` → deep-equals
-  `{ spoolName: '1794474000000000000-4242-1.ev', timeNs: T0, kind: 'start', detail: 'startup', rawDetail: 'startup', sessionId: S1, bootId: BOOT_A, pid: 4242, procStart: 51234567, cwd: '/home/dev/projects/demo', argv: ['claude','--model','opus'], name: null, payload: <the text after the '--' line, exactly>, entrypointEnv: 'cli' }`.
+  `{ spoolName: '1794474000000000000-4242-1.ev', timeNs: T0, kind: 'start', detail: 'startup', rawDetail: 'startup', sessionId: S1, bootId: BOOT_A, pid: 4242, procStart: 51234567, cwd: '/home/dev/projects/demo', argv: ['claude','--model','opus'], name: null, payload: <the text after the '--' line, exactly>, entrypointEnv: 'cli', scripted: false }`.
 - `source` `resume` / `clear` / `compact` / `fork` → that detail; `'weird'` → `'unknown'` with `rawDetail 'weird'`; no `source` → `'unknown'`, `rawDetail null`.
 - `reason` `clear` → `'clear'`; `resume` → `'switch'`; `prompt_input_exit` → `'exit'`; `logout` → `'exit'`; `other` → `'other'`; `'terminal_closed'` → `'other'` with `rawDetail 'terminal_closed'`.
 - `SessionEnd` with an `argv_b64` line present anyway → `argv null`.
@@ -2420,7 +2683,8 @@ export function hookInput(event: 'SessionStart' | 'SessionEnd', sessionId: strin
 - A stat line whose comm is `'a) b'` → `procStart` still parsed from field 22.
 - `argv null` → `argv null`.
 - argv `['claude','--model','opus','fix the bug']` → `['claude','--model','opus']`; `['claude','--','fix the bug']` → `['claude']`;
-  `['claude','--new-flag','fix the bug']` (a flag the table does not know) → unchanged: the following argument is that flag's value (principle 4).
+  `['claude','--prefill-b64=Zml4','--resume','abc','--model','opus']` → `['claude','--model','opus']` (the removed flags go too: `storableArgv`);
+  `['claude','--new-flag','fix the bug']` (a flag the table does not know) → `['claude','--new-flag']`: the following argument cannot be classified, so it is not stored (principle 4).
 - argv `['claude','--mcp-config','mcp.json']`, input cwd `/w`, `exists` true only for `/w/mcp.json` → `['claude','--mcp-config','/w/mcp.json']`.
 - `entrypointEnv ''` → `entrypointEnv null`. An extra line `future_key=1` before `--` is ignored.
 - Lines are split on `\n` only: `pwd '/p\rentrypoint_env=sdk-cli'` with no input `cwd` → `cwd '/p\rentrypoint_env=sdk-cli'` and `entrypointEnv` still `'cli'`.
@@ -2430,9 +2694,13 @@ export function hookInput(event: 'SessionStart' | 'SessionEnd', sessionId: strin
   a key twice before `--` (`pwd=/a` and `pwd=/b`, and likewise `future_key=1` twice).
 - Every hook-input fixture file parses inside a spool built with `spoolText({ …, input: <fixture text> })`
   and gives the detail its file name says.
-- `isScriptedRun(['claude','-p','hi'], null)` → true; `(['claude','--print'], 'cli')` → true; `(['claude'], 'sdk-cli')` → true;
-  `(['claude'], 'sdk-ts')` → true; `(null, 'sdk-py')` → true; `(['claude'], 'cli')` → false;
-  `(['claude'], null)` → false; `(null, null)` → false.
+- `scripted` (the `SessionStart` is built with `argv` and `entrypointEnv`; `parse(fields).scripted`):
+  `['claude','-p','hi']` with no entry point set (`entrypointEnv ''`) → true; `['claude','--print']` and `'cli'` → true;
+  `['claude','-c','-p']` and `['claude','-cp','hi']` with `'cli'` → true, while the stored `argv` is `['claude','-p']` for the first
+  (`-p` is a kept flag) and `['claude']` for the second (`-cp` is dropped whole): the answer comes from the command as recorded; `['claude','--','-p']` and `'cli'` → false;
+  `['claude']` with `'sdk-cli'` → true; with `'sdk-ts'` → true; `argv null` with `'sdk-py'` → true; `['claude']` with `'cli'` → false;
+  `['claude']` with `''` → false; `argv null` with `''` → false. A `SessionEnd` has no command: with `'sdk-cli'` → true, with `'cli'` → false,
+  and an `argv_b64` line carrying `-p` on a `SessionEnd` with `'cli'` → false.
 
 **Steps**
 - [ ] Write fixtures, `test/helpers/spool.ts`, and the test file. `npm test` → fails.
@@ -2441,7 +2709,7 @@ export function hookInput(event: 'SessionStart' | 'SessionEnd', sessionId: strin
 - [ ] Commit `Parse spool files into normalised events`; open the PR.
 
 **Done when:** all cases pass; a `claude -p` run (argv with `-p`, entry point `sdk-cli`) is
-recognised as scripted by either rule alone.
+recognised as scripted by either rule alone, `claude -c -p` included.
 
 ---
 
@@ -2711,15 +2979,15 @@ Rules that are part of this task (design 5.3–5.6, 9.1):
 - **openDeck.** `resolveConfigDir` → `loadConfig` → `resolvePlaces(env, homeDir, config.claudeHome)`
   → mkdirp (mode `0o700`) dataDir, stateDir, configDir, spoolDir, locksDir → `openStore(dbPath)`.
 - **Ingest.** Names ending in `.ev` and not starting with `.`, in name order. Unreadable or
-  `SpoolParseError` → moved to `badDir` (created when needed). `isScriptedRun` → file deleted,
+  `SpoolParseError` → moved to `badDir` (created when needed). `event.scripted` → file deleted,
   `addToKv('dropped_scripted', 1)`. Otherwise, inside one `store.transaction`: compute the link,
   `insertEvent`, `insertLink`; after the commit, delete the file. A `null` from `insertEvent`
   counts as a duplicate (the file is deleted too). **Link:** for a `start` with detail `clear`,
   `resume` or `fork`, `prev = store.latestEventOfProcess(boot, pid, procStart, event.timeNs)`
   (before inserting); when `prev` exists and `prev.sessionId !== event.sessionId`, link
   `{ fromSession: prev.sessionId, toSession: event.sessionId, kind: clear→'clear', resume→'switch', fork→'fork', timeNs: event.timeNs, eventId: <new id> }`.
-  Events with `pid` 0 never get links. The stored `argv` is the one `parseSpoolFile` returns: no
-  positional arguments (principle 4).
+  Events with `pid` 0 never get links. The stored `argv` is the one `parseSpoolFile` returns,
+  `storableArgv(recorded)`: no positional arguments, no removed flags, unknown flags as bare names (principle 4).
 - **Retention (design 5.3).** After the files are processed: every file in `badDir` whose
   `mtimeNs < now − 7 days` is removed, and so is every entry of `spoolDir` whose name starts with
   `.` and ends with `.tmp` and whose `mtimeNs < now − 1 hour` (`now` = `platform.clock.nowNs()`).
@@ -2728,10 +2996,9 @@ Rules that are part of this task (design 5.3–5.6, 9.1):
   file that `isLiveFileTrusted`, whose `entrypoint` is `'cli'` or null, and whose
   `mtimeNs < now − 2 s`: key `(bootId, pid, procStart)`; `latest = latestEventOfProcess(key, now)`;
   `argv = argvFromCmdline(proc.cmdline(pid))`, null when unreadable or empty, then
-  `absolutizePathFlags(argv, file.cwd, exists)`, then the positional arguments are dropped as
-  `parseSpoolFile` does it (`parseLaunchArgs(argv.slice(1))`; keep the program name and the `tokens`
-  of every entry that is not `kind: 'positional'`), so an initial prompt is never stored (principle
-  4). Insert an `observed` event when
+  `absolutizePathFlags(argv, file.cwd, exists)`, then `storableArgv` of that, exactly as
+  `parseSpoolFile` does it, so neither an initial prompt, nor a removed flag such as `--prefill-b64`,
+  nor the argument of an unknown flag is ever stored (principle 4). Insert an `observed` event when
   `latest` is null or names another session, or when `!processHasLaunch(key)` and `argv` is
   non-null. Observed rows: `spoolName null, timeNs now, detail '', rawDetail null, cwd file.cwd, name file.name, payload null`.
 - **Scan.** For each `listTranscriptFiles` file: when a row with this path exists with equal
@@ -2761,7 +3028,8 @@ Rules that are part of this task (design 5.3–5.6, 9.1):
    at `T0 − 2 h` → removed; `.1794474000000000000-4242-2.ev.tmp` at `T0 − 10 min` → kept (it may
    belong to a running hook); `README` at `T0 − 30 days` → untouched. None of them is counted in
    the result.
-7. argv `['claude','-p','hi']` → no row, file deleted, `getKv('dropped_scripted')` `'1'`; `entrypointEnv 'sdk-ts'` → dropped, `'2'`.
+7. argv `['claude','-p','hi']` → no row, file deleted, `getKv('dropped_scripted')` `'1'`; `entrypointEnv 'sdk-ts'` → dropped, `'2'`;
+   argv `['claude','-c','-p','hi']` and `['claude','-cp']` with `'cli'` → dropped, `'4'`.
 8. Links (all for process `P`):
    - start startup S1 `T0`; end clear S1 `T0+60s`; start clear S2 `T0+60.2s` → `links()` = `[{ eventId: 3, fromSession: S1, toSession: S2, kind: 'clear', timeNs: T0+60.2s }]`.
    - start startup S1; end resume S1; start resume S2 → one link, kind `'switch'`.
@@ -2770,7 +3038,8 @@ Rules that are part of this task (design 5.3–5.6, 9.1):
    - start startup S1; start clear S1 (same session) → no link; start compact S1 → no link.
    - the three files of the first bullet ingested one per run → the same single link.
 9. argv `['claude','--mcp-config','mcp.json']`, input `cwd` = a temp dir containing `mcp.json` → stored argv has its absolute path.
-10. argv `['claude','--model','opus','fix the bug']` → the stored argv is `['claude','--model','opus']`.
+10. argv `['claude','--model','opus','fix the bug']` → the stored argv is `['claude','--model','opus']`;
+    argv `['claude','--prefill-b64=Zml4','--model','opus']` → `['claude','--model','opus']`.
 
 `reconcile.test.ts` (fake proc current boot `BOOT_A`, process 4242 `statLine(4242, 51234567)` with cmdline `['claude','--model','opus']`; live file `C/sessions/4242.json` from `busy.json` with mtime set by `fs.utimesSync` to `T0 − 10 s`; clock `T0`)
 1. No events → one observed row `{ spoolName: null, timeNs: T0, kind: 'observed', detail: '', rawDetail: null, sessionId: S1, bootId: BOOT_A, pid: 4242, procStart: 51234567, cwd: '/home/dev/projects/demo', argv: ['claude','--model','opus'], name: 'demo name', payload: null }`; returns `{ observed: 1 }`.
@@ -2782,7 +3051,8 @@ Rules that are part of this task (design 5.3–5.6, 9.1):
 7. cmdline `[]` → observed with `argv null`; reconcile again → `0`; cmdline becomes `['claude']` → `1` more (argv `['claude']`).
 8. cmdline `['claude','--settings','s.json']` with `s.json` existing under the live file's `cwd` (a temp dir) → stored absolute.
 9. `proc.bootId()` null → `0`.
-10. cmdline `['claude','--model','opus','fix the bug']` → the observed row's argv is `['claude','--model','opus']`.
+10. cmdline `['claude','--model','opus','fix the bug']` → the observed row's argv is `['claude','--model','opus']`;
+    cmdline `['claude','--prefill-b64=Zml4','--model','opus']` → `['claude','--model','opus']`.
 
 `scan.test.ts` (transcripts under `C/projects/demo/`)
 1. Two transcripts → `read 2`; rows hold their facts; `getKv('first_scan_done')` `'1'`; `progress` called with `(1,2)` and `(2,2)`.
@@ -3333,7 +3603,7 @@ export interface SessionJson {
 export interface ListJson { version: 1; generatedAt: string; sessions: SessionJson[] }
 export interface LinkJson { kind: LinkKind; from: string; to: string; at: string }
 export interface HolderJson { pid: number; bootId: string; procStart: number | null; since: string }
-export interface ShowJson extends SessionJson { note: string | null; launch: string[] | null; links: LinkJson[]; holders: HolderJson[] }
+export interface ShowJson extends SessionJson { note: string | null; launch: string[] | null; unknownFlags: string[]; links: LinkJson[]; holders: HolderJson[] }
 export function sessionJson(row: ListRow): SessionJson;
 export function listJson(model: ListModel): ListJson;
 export function showJson(row: ListRow, links: readonly LinkRow[]): ShowJson;
@@ -3354,7 +3624,8 @@ each row as `'  ' + formatRow(row, nowNs, width − 2)`; one empty line between 
 when there are none; ends with `\n`. `ls` uses `io.size().columns`. `formatShow`: the title, then
 one line per field with the label padded to 11 characters: `id:`, `state:` (`<state>[ (<stateDetail>)] since <iso>`),
 `marks:`, `label:`, `group:`, `dir:` (`-` for null/empty), `launch:` (`shellJoin(launch)` or `unknown`),
-`continues:` (only when `continuedFrom`), `link:` per link (`<kind> <fromShort> -> <toShort> at <iso>`),
+`unknown:` (only when `unknownFlags(launch)` is not empty: the names, sanitised, joined by one space — the flags
+skydeck does not know, which a resume does not pass on), `continues:` (only when `continuedFrom`), `link:` per link (`<kind> <fromShort> -> <toShort> at <iso>`),
 `holder:` per holder (`pid <pid> since <iso>`), `pr:` per PR (`formatPrLine(pr)`, then
 ` review <r>` and ` checks <c>` when set and the level is not `cant-read`), then `note:` and the note
 lines indented by two spaces when there is a note.
@@ -3365,11 +3636,12 @@ lines indented by two spaces when there is a note.
 - `sessionJson` of a row with every field set → the exact object of 2.10.5 with keys in that order
   (`Object.keys` compared), times as `isoFromNs`, `dir ''` when null, PR `repo 'o/r'`, `okAt` ISO or null.
 - `listJson` → `{ version: 1, generatedAt: isoFromNs(model.generatedAtNs), sessions: <flatRows order> }`.
-- `showJson` → the session object followed by `note`, `launch`, `links` (only links from/to the row, by time,
+- `showJson` → the session object followed by `note`, `launch`, `unknownFlags`, `links` (only links from/to the row, by time,
   `at` ISO), `holders` (`pid`, `bootId`, `procStart`, `since`).
 - `formatList` of two groups → `'ABC-123\n  <row>\n\nno group\n  <row>\n'`; empty → `'no sessions\n'`.
 - `formatShow` of a row whose `session.launch` is `['claude','--model','opus']` contains `'id:        ' + S1`,
   `'launch:    claude --model opus'` (the recorded command, `shellJoin`), and `'launch:    unknown'` when `launch` is null;
+  no `unknown:` line for it; for `['claude','--frob','x','--other=1']` a line `'unknown:   --frob --other'`, and `showJson` has `unknownFlags ['--frob','--other']` (`[]` when `launch` is null);
   a never-fetched PR → `'pr:        https://github.com/o/r/pull/1  not fetched'`; an open PR with review
   `approved` and checks `passing` → `'pr:        https://github.com/o/r/pull/1  approved-green review approved checks passing'`;
   note `'a\nb'` → `'note:\n  a\n  b'`.
@@ -3544,7 +3816,7 @@ export function lockPath(places: Places, sessionId: string): string;
 export function checkResumable(row: ListRow, files: Files): void;               // throws ResumeRefusedError
 export function acquireLock(deck: Deck, sessionId: string): void;                 // throws ResumeRefusedError
 export function sweepLocks(deck: Deck): number;
-export interface PreparedLaunch { sessionId: string; cwd: string; argv: string[]; flagsKnown: boolean }
+export interface PreparedLaunch { sessionId: string; cwd: string; argv: string[]; flagsKnown: boolean; unknownFlags: string[] }
 export function prepareResume(deck: Deck, row: ListRow): PreparedLaunch;          // throws ResumeRefusedError
 export function prepareNew(deck: Deck, options: { label: string | null; group: string | null; extra: readonly string[] }): PreparedLaunch;  // throws UsageError
 // src/cli/launching.ts
@@ -3569,10 +3841,11 @@ lock, then command) → `launchPrepared`. `prepareNew` cleans the label and grou
 - `sweepLocks` removes a lock older than 60 s and a lock followed by a start event; keeps a fresh one; returns the count.
   `refresh(deck)` sweeps too.
 - `prepareResume` on a dead S1 with launch `['claude','--model','opus']` and label `'fix'` →
-  `{ sessionId: S1, cwd: <dir>, argv: buildResumeCommand(...).argv, flagsKnown: true }`, lock created; on a running row → refused, no lock.
+  `{ sessionId: S1, cwd: <dir>, argv: buildResumeCommand(...).argv, flagsKnown: true, unknownFlags: [] }`, lock created; on a running row → refused, no lock.
+- `prepareResume` on a dead S1 with launch `['claude','--frob','x','--model','opus']` → `argv [...R,'--model','opus']`, `unknownFlags ['--frob']`.
 - Guard before lock: a running row with a stale lock → refused for running; the lock file is unchanged.
 - `prepareNew({ label: ' x ', group: 'G', extra: ['--model','opus'] })` → `sessionId '00000000-0000-4000-8000-000000000001'`,
-  `cwd` = `platform.cwd`, `argv ['claude','--session-id',<id>,'-n','x','--model','opus']`, meta label `'x'` and group `'G'` stored;
+  `cwd` = `platform.cwd`, `argv ['claude','--session-id',<id>,'-n','x','--model','opus']`, `flagsKnown true`, `unknownFlags []`, meta label `'x'` and group `'G'` stored;
   label `'-x'` → `UsageError` and no meta stored.
 
 `commands/resume.test.ts`, `commands/new.test.ts` (`d = testDeck(t, { env: (s) => ({ SKYDECK_HANDOFF: join(s.root, 'handoff') }) })`; `await main([...], d.ctx)`)
@@ -3584,6 +3857,9 @@ lock, then command) → `launchPrepared`. `prepareNew` cleans the label and grou
 - `resume 0b5f --tab` with terminal `here` → 1, stderr names the missing tab adapter and prints the command.
 - `resume 0b5f --here --tab` → 2. `resume nope1234` → 3. A running S1 → 4 naming the pid. Twice within 60 s → second 4.
 - A session without a recorded launch command → 0 and stderr `'skydeck: original flags unknown; resuming with defaults\n'`.
+- A session whose recorded launch command has `--frob x` → 0, stderr `'skydeck: started with flags skydeck does not know, not passed on resume: --frob\n'`
+  (printed before the handoff is written), and the handoff argv has neither `--frob` nor `x`; two unknown flags are named in order,
+  separated by a space; a name with a control character is printed sanitised; a session whose flags are all known prints no such line.
 - Never a permission flag: the handoff of a session launched without one contains no `--dangerously-skip-permissions` and no `--permission-mode`.
 - `new --label 'fix it' --group ABC-1 -- --model opus` → 0; handoff
   `cd -- <cwd> || exit 1\nexec claude --session-id <uuid1> -n 'fix it' --model opus\n`; `meta(<uuid1>)` label `'fix it'`, group `'ABC-1'`.
@@ -3937,7 +4213,7 @@ and `docs/design.md` no longer disagrees with the code.
 | 1 Purpose, 2 Principles | 1 → all; 2 → 3, 17 (only the two hook entries); 3 → 3; 4 → 5, 6, 8 (fixtures, nothing kept); 5 → 2, 16; 6 → 15, 16, 18; 7 → 16, 18; 8 → 9; 9 → Contracts 2.1 |
 | 5.1 The hook | 3 (script, settings entry), 17 (install writes it) |
 | 5.2 Spool file | 3 (writes), 5 (reads), 2.10.1 |
-| 5.3 Ingest | 5 (parsing, scripted rule, positionals dropped, repeated key), 2 (field 22, cmdline, path flags), 8 (idempotence, bad files, links, order, retention of `bad/` and `.tmp` files) |
+| 5.3 Ingest | 5 (parsing, scripted rule, `storableArgv` applied, repeated key), 2 (field 22, cmdline, path flags), 8 (idempotence, bad files, links, order, retention of `bad/` and `.tmp` files) |
 | 5.4 Reconcile | 8 |
 | 5.5 Liveness | 6 |
 | 5.6 Transcripts | 6 (reading, last turn role), 4 (`last_turn_role`), 8 (incremental scan, missing) |

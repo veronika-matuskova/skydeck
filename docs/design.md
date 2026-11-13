@@ -38,8 +38,8 @@ section first.
    the command line is part of the recorded launch command and can sit in a private spool file
    until ingest drops it before storing anything. A spool file that cannot be parsed is kept in
    `spool/bad/` for diagnosis and removed after seven days; a leftover temporary file is removed
-   after one hour. An argument that follows a flag skydeck does not know is kept as that flag's
-   value, so a prompt after a flag newer than skydeck's table is stored with the launch command.
+   after one hour. An argument that follows a flag skydeck does not know is dropped; the flag's
+   name is kept so that a resume can say it was not passed on.
 5. **Resume by id, with the session's own launch command.** Never by name (names are not unique).
    skydeck never adds a permission flag that the session was not started with.
 6. **Nothing is destroyed or moved automatically.** "Done" only hides. Notes never move from one
@@ -148,9 +148,12 @@ Parsing (in `src/claude/hookinput.ts`) normalises each event:
 - `session_id` comes from the hook input; `session_env` is the fallback.
 - Process start is field 22 of `stat`, taken after the **last** `)` in the line.
 - The launch command is the base64-decoded `cmdline` split on NUL, last empty element dropped,
-  and then stripped of its positional arguments: an initial prompt on the command line is
-  conversation text (principle 4), so nothing but flags and their values is stored. Reconcile (5.4)
-  applies the same rule to the command line it reads itself.
+  and then reduced to what a resume keeps of it (7.6): positional arguments and the flags that
+  carry prompt text or choose the session are dropped, because an initial prompt on the command
+  line is conversation text (principle 4); only the other flags and their values are stored, so a
+  resume from the stored command is the same as from the recorded one. A flag that skydeck does
+  not know is stored as its bare name: what follows it cannot be classified, and may be a prompt.
+  Reconcile (5.4) applies the same rule to the command line it reads itself.
 - A file in which a key appears twice before the `--` line cannot be parsed; it goes to `spool/bad/`.
   An empty `pwd`, `session_env` or `entrypoint_env` means "unknown".
 - `SessionStart.source` → kind `start` with detail `startup`, `resume`, `clear`, `compact`,
@@ -162,9 +165,10 @@ Parsing (in `src/claude/hookinput.ts`) normalises each event:
   in the launch command are made absolute against the event's `cwd` when that path exists.
 
 **Scripted runs are dropped at ingest.** An event is discarded (and counted in `kv`) when its
-launch command contains the argument `-p` or `--print`, or when `entrypoint_env` is set and is
-not `cli`. User-level hooks also fire for `claude -p` and SDK runs; those are not sessions a
-person works in.
+launch command, as recorded, has the print flag — `-p` or `--print`, alone or inside a cluster of
+short flags such as `-cp` — or when `entrypoint_env` is set and is not `cli`. An end event has
+no launch command, so there only the entry point decides. User-level hooks also fire for
+`claude -p` and SDK runs; those are not sessions a person works in.
 
 **Links.** When a `start` event with detail `clear`, `resume` or `fork` is ingested for a process
 whose previously held session (6.1) is a different session, a row old → new is written to
@@ -376,16 +380,39 @@ session object with `note`, `launch` (argument list or null), `links` and `holde
 event that has one, and rewrites it. The program is the configured `claudeCommand` (default
 `claude`), never the recorded first element. The recorded flags are parsed with a table of
 Claude Code flags and their shapes (no value, one value, optional value, several values;
-`--flag=value` is understood). A flag that is not in the table is kept, together with a following
-argument that does not start with `-`.
+`--flag=value` is understood), which lists every flag the program declares, those hidden from its
+help included. A flag that is not in the table is not passed on, nor is a following argument that
+does not start with `-`: it cannot be classified, and may be a prompt (principle 4). The
+recorded command keeps the flag's name, and `resume` and `show` say that the session was started
+with flags skydeck does not know, naming them.
+
+Arguments are read as Claude Code's own parser reads them: a flag that takes several values
+takes the next argument whatever it is, and then the arguments after it up to the next flag (a
+token that starts with `-` and has more than one character), so a prompt written directly after
+such a flag is taken as one of its values and stays with the stored launch command (principle 4);
+`--flag=value` consumes nothing more; a short flag takes the rest of its token as its value
+(`-rabc` is `--resume abc`), and a token of several short flags (`-cp`) is one flag, removed as a
+whole when any flag in it is removed. After a short flag without a value, a `-` starts a new
+token in the same way: `-c-model` is `-c --model`, and `-c-` is `-c --`. A lone `-` is a value;
+`--` ends the flags, and it and everything after it are positional arguments.
 
 - Removed: `--resume`/`-r` and its value, `--continue`/`-c`, `--session-id` and its value,
   `--fork-session`, `--name`/`-n` and its value, `--worktree`/`-w` and its value, `--bg`,
-  `--from-pr` and its value, and positional arguments (an initial prompt).
+  `--from-pr` and its value, and positional arguments (an initial prompt). Also removed are the
+  flags that choose which session is opened or where it runs: `--teleport`, `--cloud` (`--remote`)
+  and `--environment` (`--pool`) with their values, `--desktop`, and `--tmux`, which needs
+  `--worktree`. The flags that choose a session or act once are removed too:
+  `--rewind-files`, `--resume-session-at`, `--resume-drops-turn`, `--reply-on-resume`,
+  `--attach-serve`, `--session-began-as-copy`, `--init-only` and `--handle-uri`; so are the
+  one-time actions `--init` and `--maintenance`, and `--ref`, `--on-branch`, `--correlation-id` and
+  `--forward-home-settings`, which only work together with the cloud flags above. Flags that carry
+  prompt text are removed as well: `--prefill`, `--prefill-b64` and the deep-link flags
+  (`--deep-link-origin`, `--deep-link-repo`, `--deep-link-last-fetch`, `--deep-link-cwd-b64`).
+  Flags that only configure how the session runs, including `--remote-control`, are kept.
 - Added, directly after the program: `--resume <session id>`, then `-n <label>` when the session
   has a label.
-- Kept, in order: everything else — including `--mcp-config`, `--settings`, `--add-dir`,
-  `--model`, and a permission flag if it was there.
+- Kept, in order: every other flag of the table, with its values — including `--mcp-config`,
+  `--settings`, `--add-dir`, `--model`, and a permission flag if it was there.
 - Never added: a permission flag.
 
 For a session without a recorded launch command the result is `claude --resume <id>`, and
