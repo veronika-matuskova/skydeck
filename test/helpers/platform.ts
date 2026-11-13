@@ -2,13 +2,16 @@ import type { TestContext } from 'node:test';
 
 import { resolvePlaces } from '../../src/platform/paths.ts';
 import type { Places } from '../../src/platform/paths.ts';
-import { realPlatform } from '../../src/platform/real.ts';
-import { NS_PER_SECOND, nsFromMs } from '../../src/platform/time.ts';
+import { assertProcessId, realPlatform } from '../../src/platform/real.ts';
+import { MAX_TIMER_MS, NS_PER_SECOND, nsFromMs } from '../../src/platform/time.ts';
 import type {
   Clock,
+  Detached,
+  DetachedOptions,
   Ns,
   Platform,
   Proc,
+  Processes,
   RunOptions,
   RunResult,
   Runner,
@@ -27,22 +30,25 @@ export const BOOT_B = '7d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a';
 
 export interface FakeClock extends Clock {
   /**
-   * Jumps to `ns`. No timer of `every` is called; each running one is next due one period after
-   * `ns`, as a real interval is after the wall clock jumped.
+   * Jumps to `ns`. No timer is called; each running one of `every` is next due one period after
+   * `ns`, as a real interval is after the wall clock jumped, and one of `after` keeps the time it
+   * had left (a real timeout counts on a clock that does not jump).
    */
   setNs(ns: Ns): void;
   /**
-   * Moves the time on by `ms`. Every timer of `every` that falls due on the way is called at its
-   * time (nowNs() answers that time meanwhile), once per period, in time order. `sleep(ms)` calls
-   * this and resolves on the next microtask.
+   * Moves the time on by `ms`. Every timer of `every` and `after` that falls due on the way is
+   * called at its time (nowNs() answers that time meanwhile), once per period, in time order; of
+   * two due at once, the one started first. `sleep(ms)` calls this and resolves on the next
+   * microtask.
    */
   advanceMs(ms: number): void;
-  /** How many timers of `every` run: started and not stopped. */
+  /** How many timers run: those of `every` not stopped, those of `after` not fired or cancelled. */
   timers(): number;
 }
 
 interface FakeTimer {
-  periodNs: Ns;
+  /** null for a timer of `after`, which fires once. */
+  periodNs: Ns | null;
   dueNs: Ns;
   callback: () => void;
 }
@@ -66,12 +72,23 @@ export function fakeClock(startNs: Ns): FakeClock {
       if (timer.dueNs > now) {
         now = timer.dueNs;
       }
-      timer.dueNs += timer.periodNs;
+      if (timer.periodNs === null) {
+        running.delete(timer);
+      } else {
+        timer.dueNs += timer.periodNs;
+      }
       timer.callback();
     }
     if (endNs > now) {
       now = endNs;
     }
+  };
+  /** Starts a timer; the returned function stops it. Sets keep insertion order: first started, first called. */
+  const start = (timer: FakeTimer): (() => void) => {
+    running.add(timer);
+    return () => {
+      running.delete(timer);
+    };
   };
   return {
     nowNs: () => now,
@@ -83,17 +100,24 @@ export function fakeClock(startNs: Ns): FakeClock {
       if (!Number.isSafeInteger(ms) || ms < 1) {
         throw new RangeError(`not a positive whole number of milliseconds: ${ms}`);
       }
-      const timer = { periodNs: nsFromMs(ms), dueNs: now + nsFromMs(ms), callback };
-      running.add(timer);
-      return () => {
-        running.delete(timer);
-      };
+      return start({ periodNs: nsFromMs(ms), dueNs: now + nsFromMs(ms), callback });
+    },
+    after: (ms, callback) => {
+      if (!Number.isSafeInteger(ms) || ms < 0 || ms > MAX_TIMER_MS) {
+        throw new RangeError(`not a whole number of milliseconds a timer can wait: ${ms}`);
+      }
+      return start({ periodNs: null, dueNs: now + nsFromMs(ms), callback });
     },
     setNs: (ns) => {
-      now = ns;
       for (const timer of running) {
-        timer.dueNs = ns + timer.periodNs;
+        if (timer.periodNs === null) {
+          const left = timer.dueNs - now;
+          timer.dueNs = ns + (left > 0n ? left : 0n);
+        } else {
+          timer.dueNs = ns + timer.periodNs;
+        }
       }
+      now = ns;
     },
     advanceMs,
     timers: () => running.size,
@@ -110,6 +134,10 @@ export interface FakeProc extends Proc {
   setBootId(id: string | null): void;
   setProcess(pid: number, p: FakeProcess | null): void;
   setMemAvailableMb(mb: number | null): void;
+  /** What fdTarget(pid, fd) answers; null: nothing (the default). */
+  setFdTarget(pid: number, fd: number, target: string | null): void;
+  /** The ports tcpListening finds listening; null: /proc/net/tcp* cannot be read. */
+  setTcpListening(ports: readonly number[] | null): void;
 }
 
 export function fakeProc(
@@ -117,14 +145,30 @@ export function fakeProc(
     bootId?: string | null;
     processes?: Record<number, FakeProcess>;
     memAvailableMb?: number | null;
+    /** Default []: nothing listens. */
+    tcpListening?: readonly number[] | null;
   } = {},
 ): FakeProc {
   let bootId = init.bootId ?? null;
   let memAvailableMb = init.memAvailableMb ?? null;
+  let listening = init.tcpListening === undefined ? [] : init.tcpListening;
+  const fdTargets = new Map<string, string>();
   const processes = new Map<number, FakeProcess>(
     Object.entries(init.processes ?? {}).map(([pid, p]) => [Number(pid), p]),
   );
   return {
+    fdTarget: (pid, fd) => fdTargets.get(`${pid}/${fd}`) ?? null,
+    tcpListening: (port) => (listening === null ? null : listening.includes(port)),
+    setFdTarget: (pid, fd, target) => {
+      if (target === null) {
+        fdTargets.delete(`${pid}/${fd}`);
+      } else {
+        fdTargets.set(`${pid}/${fd}`, target);
+      }
+    },
+    setTcpListening: (ports) => {
+      listening = ports;
+    },
     bootId: () => bootId,
     stat: (pid) => processes.get(pid)?.stat ?? null,
     cmdline(pid) {
@@ -259,6 +303,67 @@ export function fakeRunner(
   };
 }
 
+export interface DetachedCall {
+  command: string;
+  args: readonly string[];
+  options: DetachedOptions;
+}
+
+export interface SignalCall {
+  pid: number;
+  signal: 'SIGTERM' | 'SIGKILL';
+}
+
+export interface FakeProcesses extends Processes {
+  /** Every startDetached call, in order, Windows commands included. */
+  calls: DetachedCall[];
+  /** Every signal call, in order. */
+  signals: SignalCall[];
+  /** The pids signal() finds alive; the test changes it. signal() itself does not. */
+  live: Set<number>;
+}
+
+/**
+ * Processes that start nothing. Every startDetached call is recorded and `handler` answers it (a
+ * rejection is the rejection); without one each call gets the next pid from 5001 and an `exited`
+ * that never settles. A Windows command is recorded and answered like any other, so that a test
+ * can assert the command line Edge or the keep-alive would get: only what can start a real
+ * process refuses one (ruling on A32). signal() refuses what the real one refuses (a RangeError
+ * for a pid that is not a positive whole number), records the call and answers whether `live`
+ * holds the pid.
+ */
+export function fakeProcesses(
+  handler?: (call: DetachedCall) => Detached | Promise<Detached>,
+  live: Iterable<number> = [],
+): FakeProcesses {
+  const calls: DetachedCall[] = [];
+  const signals: SignalCall[] = [];
+  const alive = new Set(live);
+  let nextPid = 5000;
+  return {
+    calls,
+    signals,
+    live: alive,
+    startDetached(command, args, options) {
+      const call = { command, args, options };
+      calls.push(call);
+      if (handler === undefined) {
+        return Promise.resolve({ pid: ++nextPid, exited: new Promise(() => {}) });
+      }
+      try {
+        return Promise.resolve(handler(call));
+      } catch (error) {
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    },
+    signal(pid, signal) {
+      assertProcessId(pid); // as the real one: a RangeError for 0, -1, NaN, 1.5
+      signals.push({ pid, signal });
+      return alive.has(pid);
+    },
+  };
+}
+
 export interface TestPlatformOptions {
   /** Passed to sandbox.env(); a function gets the sandbox first (for paths inside it). */
   env?: Record<string, string | undefined> | ((s: Sandbox) => Record<string, string | undefined>);
@@ -268,24 +373,57 @@ export interface TestPlatformOptions {
   bootId?: string;
   /** Default 8000. */
   memAvailableMb?: number;
+  /**
+   * Real processes, which refuse Windows programs always (A32), instead of fakeProcesses(). Their
+   * signal() reaches only a process they started that still runs: beside the fake /proc it throws
+   * for any other pid.
+   */
+  realProcesses?: boolean;
 }
 
-export interface TestPlatform {
+/**
+ * A platform for a test and the parts it is made of. The type parameters say which parts are
+ * fakes a test can steer: all of them for testPlatform, none for realTestPlatform.
+ */
+export interface TestPlatform<
+  C extends Clock = FakeClock,
+  P extends Proc = FakeProc,
+  R extends Runner = FakeRunner,
+  X extends Processes = FakeProcesses,
+> {
   /**
-   * Real Files; fake clock, proc and runner; env = sandbox.env(options.env); homeDir and cwd =
-   * sandbox.home; uuid() returns 00000000-0000-4000-8000-00000000000<n> (n = 1, 2, …);
-   * nodePath process.execPath; nodeVersion '24.19.0'; appRoot = the repository root.
+   * testPlatform: real Files and net; fake clock, proc, runner and processes; env =
+   * sandbox.env(options.env); homeDir and cwd = sandbox.home; uuid() returns
+   * 00000000-0000-4000-8000-00000000000<n> (n = 1, 2, …); randomBytes 0, 1, 2, … across calls;
+   * pid 4000, the real uid, userName 'tester'; nodePath process.execPath; nodeVersion '24.19.0';
+   * appRoot = the repository root.
    */
   platform: Platform;
   sandbox: Sandbox;
-  clock: FakeClock;
-  proc: FakeProc;
-  runner: FakeRunner;
+  clock: C;
+  proc: P;
+  runner: R;
+  processes: X;
   /** resolvePlaces(platform.env, sandbox.home, null) */
   places: Places;
 }
 
-export function testPlatform(t: TestContext, options: TestPlatformOptions = {}): TestPlatform {
+/** realTestPlatform's: every part real. */
+export type RealTestPlatform = TestPlatform<Clock, Proc, Runner, Processes>;
+
+/**
+ * The test platform for logic: fake clock, /proc, runner and processes (see TestPlatform). Pass
+ * `realProcesses: true` as a literal, so that the type of `processes` says they are real.
+ */
+export function testPlatform(
+  t: TestContext,
+  options: TestPlatformOptions & { realProcesses: true },
+): TestPlatform<FakeClock, FakeProc, FakeRunner, Processes>;
+export function testPlatform(t: TestContext, options?: TestPlatformOptions): TestPlatform;
+export function testPlatform(
+  t: TestContext,
+  options: TestPlatformOptions = {},
+): TestPlatform<FakeClock, FakeProc, FakeRunner, Processes> {
   const s = sandbox(t);
   const env = s.env(typeof options.env === 'function' ? options.env(s) : options.env);
   const clock = fakeClock(options.startNs ?? T0);
@@ -294,20 +432,145 @@ export function testPlatform(t: TestContext, options: TestPlatformOptions = {}):
     memAvailableMb: options.memAvailableMb ?? 8000,
   });
   const runner = fakeRunner();
-  const real = realPlatform();
+  const real = realPlatform({ refuseWindows: true });
+  const processes =
+    options.realProcesses === true ? ownProcessesOnly(real.processes) : fakeProcesses();
   let uuids = 0;
+  let randoms = 0;
   const platform: Platform = {
     clock,
     files: real.files,
     proc,
     runner,
+    processes,
+    net: real.net,
     env,
     homeDir: s.home,
     cwd: s.home,
     uuid: () => `00000000-0000-4000-8000-${String(++uuids).padStart(12, '0')}`,
+    randomBytes: (count) => Uint8Array.from({ length: count }, () => randoms++ & 0xff),
+    pid: 4000,
+    uid: real.uid,
+    userName: 'tester',
     nodePath: process.execPath,
     nodeVersion: '24.19.0',
     appRoot: real.appRoot,
   };
-  return { platform, sandbox: s, clock, proc, runner, places: resolvePlaces(env, s.home, null) };
+  return {
+    platform,
+    sandbox: s,
+    clock,
+    proc,
+    runner,
+    processes,
+    places: resolvePlaces(env, s.home, null),
+  };
+}
+
+/**
+ * Real processes that signal only what they started and what still runs. Beside a fake /proc,
+ * design 5.5's identity check answers from fixtures, and a fixture's pid may be a real process of
+ * the developer's: so signal() throws for any other pid, and sends nothing.
+ */
+function ownProcessesOnly(real: Processes): Processes {
+  const running = new Set<number>();
+  return {
+    async startDetached(command, args, options) {
+      const child = await real.startDetached(command, args, options);
+      running.add(child.pid);
+      void child.exited.then(() => {
+        running.delete(child.pid);
+      });
+      return child;
+    },
+    signal(pid, signal) {
+      if (!running.has(pid)) {
+        throw new Error(
+          `testPlatform signals only the processes it started and that still run, not ${pid}`,
+        );
+      }
+      return real.signal(pid, signal);
+    },
+  };
+}
+
+/** What a keeper, the stand-in, the hook and the launcher run, linked into the sandbox's bin. */
+const REAL_PROGRAMS = [
+  'python3',
+  'sh',
+  'sleep',
+  'date',
+  'cat',
+  'base64',
+  'mkdir',
+  'mv',
+  'rm',
+  'dirname',
+  'readlink',
+];
+
+/**
+ * A platform for tests that start a keeper, the stand-in or a server, or judge a real process
+ * alive (A36): the real clock, /proc (and so the boot id, unless `options.bootId` overrides what
+ * bootId() reports), runner (a run without env or cwd gets the sandbox's environment and home),
+ * processes, net and randomBytes; pid = process.pid, the real uid and
+ * userName; homeDir and cwd = the sandbox's home, appRoot = the repository, env =
+ * sandbox.env(options.env). Its runner and processes refuse Windows programs always (A32), whatever
+ * any environment says. python3, sh and the other programs of REAL_PROGRAMS are linked into the
+ * sandbox's bin.
+ */
+export function realTestPlatform(
+  t: TestContext,
+  options: { bootId?: string; env?: TestPlatformOptions['env'] } = {},
+): RealTestPlatform {
+  const s = sandbox(t);
+  s.link(...REAL_PROGRAMS);
+  const env = s.env(typeof options.env === 'function' ? options.env(s) : options.env);
+  const real = realPlatform({ refuseWindows: true });
+  const { bootId } = options;
+  const proc: Proc = bootId === undefined ? real.proc : { ...real.proc, bootId: () => bootId };
+  // A run without env or cwd would get the developer's (Node's spawn falls back to process.env):
+  // here it gets the sandbox's environment and home, as platform.env says.
+  const runner: Runner = {
+    run: (command, args, runOptions = {}) =>
+      real.runner.run(command, args, {
+        ...runOptions,
+        env: runOptions.env ?? env,
+        cwd: runOptions.cwd ?? s.home,
+      }),
+    runInteractive: (command, args, runOptions = {}) =>
+      real.runner.runInteractive(command, args, {
+        ...runOptions,
+        env: runOptions.env ?? env,
+        cwd: runOptions.cwd ?? s.home,
+      }),
+  };
+  const platform: Platform = {
+    clock: real.clock,
+    files: real.files,
+    proc,
+    runner,
+    processes: real.processes,
+    net: real.net,
+    env,
+    homeDir: s.home,
+    cwd: s.home,
+    uuid: real.uuid,
+    randomBytes: real.randomBytes,
+    pid: real.pid,
+    uid: real.uid,
+    userName: real.userName,
+    nodePath: real.nodePath,
+    nodeVersion: real.nodeVersion,
+    appRoot: real.appRoot,
+  };
+  return {
+    platform,
+    sandbox: s,
+    clock: real.clock,
+    proc,
+    runner,
+    processes: real.processes,
+    places: resolvePlaces(env, s.home, null),
+  };
 }
