@@ -136,7 +136,11 @@ The inputs of these two events contain no conversation content.
 
 ### 5.3 Ingest
 
-Every skydeck command except `hook` starts with the same three steps, in this order:
+Every skydeck command that works on sessions (`ls`, `show`, `label`, `group`, `note`, `done`,
+`undone`, `pr`, `new`, `resume`, `restore` and the interactive list) starts with the same three
+steps, in this order. `install` runs them after it has made its links and changed the settings
+(8); `doctor` and `uninstall` do not run them (8); the hook is a script, not a command, and
+does none of this:
 
 1. **Ingest the spool.** Files are read in name order. Each becomes at most one row in `events`,
    keyed by the spool file name so that reading a file twice changes nothing; the file is deleted
@@ -305,7 +309,7 @@ There are three states, plus one fallback.
 | State | Rule |
 |---|---|
 | `working` | Running, and the holder's live-session file has `status` `busy`. |
-| `waiting` | Running, and that `status` is `idle` or `waiting`. Shown as "waiting for you". `waitingFor`, when present, is shown as detail. |
+| `waiting` | Running, and that `status` is `idle` or `waiting`. Shown as `waiting`. `waitingFor`, when present, is the state's detail: `show` and the list's detail view print it in parentheses after the state, and `--json` carries it as `stateDetail`. |
 | `running` | Running, but no live-session file can be read for the holder, or its `status` is another value. |
 | `not-running` | Not running. |
 
@@ -451,7 +455,7 @@ The interactive list is built as two pure functions — `reduce(model, key)` and
 | `skydeck note <ref> [--set <text>]` | Edit in `$VISUAL` / `$EDITOR` (7.1), or set directly. |
 | `skydeck done <ref>` / `undone <ref>` | Hide / show. |
 | `skydeck pr add <ref> <url>` / `pr rm <ref> <url>` / `pr refresh` | Attach, detach, fetch status. |
-| `skydeck new [--label <text>] [--group <text>] [-- <claude flags>]` | Start a new session in the current directory (7.7). |
+| `skydeck new [--label <text>] [--group <text>] [--here \| --tab] [-- <claude flags>]` | Start a new session in the current directory (7.7). |
 | `skydeck resume <ref> [--here \| --tab]` | Resume one session (7.6). |
 | `skydeck restore [--all] [--dry-run] [--yes]` | Bring back what was open (7.8). |
 | `skydeck install` / `uninstall [--purge]` / `doctor` | Section 8. |
@@ -723,8 +727,9 @@ could not be resumed; see above`).
   restoring it could undo what the user changed since. An install that changes nothing writes no
   backup. Every check that can stop install runs before it creates anything, and the question is
   asked before anything is created too, so a refusal or a no leaves no directory, database or link
-  behind: a link is created or re-pointed only where there is nothing or a symbolic link; a settings
-  file that cannot be read or is not JSON stops it; so does a settings path that is a symbolic link
+  behind (apart from the compile cache under `~/.cache/skydeck` that every run of the launcher
+  creates, 10): a link is created or re-pointed only where there is nothing or a symbolic link;
+  a settings file that cannot be read or is not JSON stops it; so does a settings path that is a symbolic link
   to nothing (install names the link and its target and never replaces it with a file), and a
   missing Claude Code directory (never created for it). After the yes, install reads the settings
   file again, also right before writing it: if it is no longer what was shown (the user or another
@@ -741,7 +746,9 @@ could not be resumed; see above`).
   numbers that lost digits as install's question does. Removes the
   links that still point where install pointed them. It never removes a backup, not even with
   `--purge`, and names each one. It creates nothing but that backup: no directory, database or
-  file, also none the user removed after install. The database stays unless `--purge` is given.
+  file, also none the user removed after install. The database stays unless `--purge` is given,
+  which removes the data, state and configuration folders (the database, the spool, `hook.log` and
+  `config.json`).
 - **`skydeck doctor`** reports and exits 1 on any problem: hook entries present and `<hookPath>`
   resolvable; Node.js version; database writable; spool size, and the files in `spool/bad/` with
   their ages (they are removed after seven days); age of the last event; the last lines of
@@ -767,7 +774,10 @@ could not be resumed; see above`).
 | `claudeHome` | the configuration key `claudeHome`, else `$CLAUDE_CONFIG_DIR`, else `~/.claude` | Claude Code's own files. |
 
 `SKYDECK_HOME`, when set, replaces the first three with `$SKYDECK_HOME/data`, `/state`,
-`/config`; tests use it. The hook resolves `stateDir` by the same rule.
+`/config`; tests use it. The hook resolves `stateDir` by the same rule. The launcher keeps the
+cache of compiled modules (10) elsewhere: in `$NODE_COMPILE_CACHE`, else
+`$XDG_CACHE_HOME/skydeck/compile-cache`, else `~/.cache/skydeck/compile-cache`; it is not one of
+the places above, and `uninstall --purge` leaves it.
 
 An environment variable (`SKYDECK_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CONFIG_HOME`,
 `CLAUDE_CONFIG_DIR`) counts only when it is non-empty and an absolute path; otherwise it is treated
