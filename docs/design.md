@@ -293,13 +293,17 @@ Marks are shown next to the state.
 
 ### 7.1 Labels, groups, notes, done
 
-- **Label.** One line, trimmed, not empty, not starting with `-`. The **title** of a row is the
+- **Label.** One line, trimmed, not empty, not starting with `-`, and without control characters
+  (anything the sanitiser of 7.4 would change). The **title** of a row is the
   first that exists of: the skydeck label; the name set in Claude Code (`custom-title`); Claude
-  Code's generated title (`ai-title`); otherwise the start time and the project directory name.
+  Code's generated title (`ai-title`); otherwise the start time and the project directory name,
+  as `YYYY-MM-DD HH:MM <directory name>` in UTC (`?` when the directory is not known). A name or
+  title that is empty or only whitespace once control characters are removed (Claude Code writes
+  an empty name when one is cleared) counts as not set.
   When skydeck starts or resumes a session that has a label, it passes the label to Claude Code
   as the session name, so the terminal tab shows it. Claude Code itself keeps a session name
   across `/clear`.
-- **Group.** One line, optional. When no group is set and the title starts with a ticket key
+- **Group.** One line without control characters, optional. When no group is set and the title starts with a ticket key
   (configuration `groupPattern`, default `^[A-Z][A-Z0-9]+-[0-9]+`), that key is the group.
 - **Note.** Free text of any length, edited in `$EDITOR`.
 - **Done.** Hides the session. It never stops a process. A done session is shown again when it
@@ -314,7 +318,11 @@ Marks are shown next to the state.
 
 Every session known from events or transcripts, except: sessions whose transcript has an
 `entrypoint` other than `cli`; sessions hidden by done (shown with `--all`); and sessions that
-are `expired` and have no label, group, note or pull request.
+are `expired` and have nothing the user attached: no label, no group set by the user, no note and
+no attached pull request (a group that `groupPattern` takes from the title does not count, or an
+expired session with a ticket key in its title would stay in the list for ever). A session that is not running and
+has no transcript is never listed, not even with `--all`: there is nothing to resume, and one that
+never received a prompt has no transcript (14).
 
 ### 7.3 Pull requests
 
@@ -355,6 +363,8 @@ otherwise it behaves like `skydeck ls`.
   short id (first 8 characters of the session id).
 - Every string that comes from a transcript, a live-session file or GitHub passes through the
   sanitiser, which removes control characters and escape sequences, when the list model is built.
+  So do the label and the group, although setting them refuses such characters (7.1): the
+  database can be changed by other means. A note is free multi-line text: a row only shows that there is one, and whoever prints a note sanitises it.
 
 Keys: arrows or `j`/`k` move; `Enter` detail; `l` label; `g` group; `n` note; `d` done or undo;
 `p` pull requests; `R` resume; `/` filter; `a` show all; `r` refresh; `q` quit. The filter
@@ -380,8 +390,10 @@ The interactive list is built as two pure functions — `reduce(model, key)` and
 | `skydeck install` / `uninstall [--purge]` / `doctor` | Section 8. |
 
 **`<ref>`** is resolved in this order: a full session id; a unique id prefix of at least 4
-characters, searched among all known sessions; a label equal to the text, searched among listed
-sessions. No match or more than one match is an error that lists the candidates.
+characters, searched among all known sessions; a label equal to the text, searched among the
+sessions `ls --all` would show (done ones included, so that `undone <label>` can work). Ids are
+compared in lower case, labels exactly as typed. The first step that finds anything decides. No
+match or more than one match is an error that lists the candidates.
 
 **Exit codes:** 0 success; 1 failure, or `doctor` found a problem; 2 usage error; 3 reference not
 found or ambiguous; 4 resume refused; 5 restore stopped before finishing.
