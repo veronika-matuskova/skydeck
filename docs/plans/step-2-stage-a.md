@@ -857,23 +857,59 @@ Two additions to S2 8.2.3 and 8.3 that task 1 records in the design: `result` ca
 ### 2.8 Server modules other tasks call
 
 ```ts
-// src/window/auth.ts (task 11)
-export function ensureSecret(store: Store, random: (n: number) => Uint8Array): Uint8Array; // one transaction
-export function replaceSecret(store: Store, random: (n: number) => Uint8Array): void;         // --new-secret; clears window_alarm
+// src/window/auth.ts (task 11). Thrown errors below were ruled by the plan owner (task 11); their
+// messages name sizes, never values. Callers (tasks 17 and 18) run isNonce on every nonce a peer
+// sent before they call pageProof, serverProof or wrapSecret, so a page's bad nonce closes the
+// connection (4001) and never reaches a throw.
+/** One transaction. A stored value that is not 32 bytes in isNonce's form is replaced as if absent
+ *  (ruled): it could prove nothing, and a page holding a key from it gets 4003 and asks for a new launch.
+ *  Both: RangeError, and nothing stored, when the random source gives another number of bytes. */
+export function ensureSecret(store: Store, random: (n: number) => Uint8Array): Uint8Array;
+export function replaceSecret(store: Store, random: (n: number) => Uint8Array): void;         // --new-secret; clears window_alarm; one transaction
+/** RangeError for a key that is not 32 bytes, a mode other than 'key' | 'launch', or an sN or cN that is not isNonce. */
 export function pageProof(key: Uint8Array, mode: 'key' | 'launch', sN: string, cN: string, origin: string): string;
-export function serverProof(key: Uint8Array, mode: 'key' | 'launch', sN: string, cN: string, origin: string): string;
+export function serverProof(key: Uint8Array, mode: 'key' | 'launch', sN: string, cN: string, origin: string): string; // as pageProof
+/** RangeError for a secret or token that is not 32 bytes, an IV that is not 12, or an sN or cN that is not isNonce. */
 export function wrapSecret(secret: Uint8Array, token: Uint8Array, sN: string, cN: string, iv: Uint8Array): string;
-export function isNonce(text: string): boolean; // 43 characters of base64url, 32 bytes
+/** 43 characters of base64url, 32 bytes, in the canonical form (ruled): the two bits the last
+ *  character has to spare are zero, as an encoder writes them, so one value has one text. */
+export function isNonce(text: string): boolean;
+/** Mode `key` (ruled, review 2 of task 11): whether `proof` is the page's proof made with the
+ *  secret, by check's rules — timingSafeEqual on two 43-byte buffers; false without comparing for a
+ *  proof that is not a string of 43 bytes, an sN or cN that is not isNonce, an origin that is not a
+ *  string or a secret that is not 32 bytes. Never throws. Task 17 uses it for mode `key` and never
+ *  compares proofs itself. */
+export function keyProofMatches(secret: Uint8Array, proof: string, sN: string, cN: string, origin: string): boolean;
 export interface Tokens {
+  /** `id`: 32 lower-case hex characters (16 random bytes, the control parser's form). RangeError for
+   *  seconds other than 30 and 600, or a random source that gives another number of bytes; Error
+   *  when it repeats an id. How a token ends (ruled): it expires when its `clock.after` timer of
+   *  `seconds` runs out (a timer counts on a clock that does not jump, so WSL's wall clock stepping
+   *  back cannot stretch it) or when it is looked at (`state`, `check`) with the wall clock at or past
+   *  `expiresAtNs` (a PC that slept), whichever comes first. It holds its timer only while it waits:
+   *  a use, a drop and forgetAll stop it. */
   mint(seconds: 30 | 600): { id: string; token: Uint8Array; expiresAtNs: Ns };
+  /** null for an id never minted (or forgotten). A used token stays 'used' (or 'reused') whatever
+   *  comes later; an unused one is 'dropped' once given up, else 'expired', else 'waiting'. */
   state(id: string): TokenState | null;
-  drop(id: string): boolean;
-  /** Constant-time check of `proof` against every token; a match marks it used (or reused: the alarm). */
-  check(proof: string, sN: string, cN: string, origin: string): { kind: 'match'; token: Uint8Array } | { kind: 'reused' } | { kind: 'none' };
-  forgetAll(): void;
+  drop(id: string): boolean; // false for an unknown id
+  /** Constant-time check of `proof` against every token a proof can still reach — waiting, used or
+   *  reused; one dropped or expired before its use can only give 'none' and is skipped: timingSafeEqual
+   *  on equal-length buffers, not stopping at a match. A proof that is not a string of 43 bytes, an
+   *  sN or cN that is not isNonce, or an origin that is not a string is 'none' without comparing.
+   *  A match marks the token used. The alarm (ruled, review 2 of task 11): a proof with a used token
+   *  marks it reused FIRST, then calls onAlarm on that token's first reuse only (again on a later
+   *  reuse only while every earlier call failed), so a used token presented in a loop costs no store
+   *  write. check NEVER throws, whatever onAlarm does: the verdict stays 'reused', and a failing
+   *  onAlarm (a refused store write, a locked database) comes back as `alarmFailure` — the error's
+   *  name and string code, never its message — for the caller to log; else null. */
+  check(proof: string, sN: string, cN: string, origin: string): { kind: 'match'; token: Uint8Array } | { kind: 'reused'; alarmFailure: string | null } | { kind: 'none' };
+  forgetAll(): void; // empties everything, stops every timer
 }
 export function createTokens(clock: Clock, random: (n: number) => Uint8Array, onAlarm: () => void): Tokens;
-export function raiseAlarm(store: Store, nowNs: Ns): void; // kv window_alarm
+/** kv window_alarm, in one transaction: the time of the FIRST second use is kept (ruled, review 2
+ *  of task 11) — a recorded time is never overwritten; a value that is not a decimal time is. */
+export function raiseAlarm(store: Store, nowNs: Ns): void;
 
 // src/window/runtime.ts (task 15)
 export interface RuntimeFiles { dir: string; serverJson: string; serverSock: string; serverPid: string; keepalivePid: string; keepaliveInterop: string; interop: string; termsDir: string; keeperFile(build: string): string; termSock(id: string): string; termPid(id: string): string }
@@ -1782,20 +1818,36 @@ and a random source; no socket.
 - `wrapSecret`'s output opens with Node's AES-256-GCM under the HKDF key of the token and both
   nonces, and not with another token or with the nonces swapped.
 - `ensureSecret` creates 32 bytes once (two calls return the same; a second connection's call in
-  between returns the first's), stored base64url without padding; `replaceSecret` changes it and
-  clears `window_alarm`.
+  between returns the first's), stored base64url without padding; a stored value that is not a
+  secret in that form is replaced (ruled); `replaceSecret` changes it and clears `window_alarm`.
 - Tokens (fake clock): `mint(30)` → `state` `waiting`; a proof made with it → `match` and
   `used`; the same proof again → `reused`, `onAlarm` called once; after 30 s an unused token →
   `none` and `state` `expired`; `drop` → `dropped`, and a later proof with it → `none` (`reused`
   when it had been used); `mint(600)` lives 10 minutes; a used token stays known after `forgetAll`
-  is not called (the server's life); `forgetAll` empties everything.
+  is not called (the server's life); `forgetAll` empties everything. A token lives no longer than
+  its seconds when the wall clock steps back, expires at once when it jumps past `expiresAtNs`,
+  and holds a timer only while it waits (ruled).
 - `check` compares in constant time (`crypto.timingSafeEqual` on equal-length buffers; a proof
   of another length is `none` without comparing); a proof made with the server's label never
   matches a page proof.
-- `isNonce`: 43 base64url characters of 32 bytes → true; 42, 44, `+`, `/`, `=` → false.
-- `raiseAlarm` writes the time; the secret's bytes never appear in any string the module returns
-  except `wrapSecret`'s ciphertext (checked by searching every returned string for the
-  base64url of the secret).
+- `isNonce`: 43 base64url characters of 32 bytes → true; 42, 44, `+`, `/`, `=`, a last character
+  whose two spare bits are not zero → false.
+- The thrown cases of 2.8 (ruled): a key, nonce, mode or IV of the wrong kind, seconds other than
+  30 and 600, a random source that gives the wrong number of bytes or repeats an id.
+- The alarm (ruled, review 2): a used token presented again and again is `reused` each time and
+  calls `onAlarm` on its first reuse only; each token raises it on its own first reuse; the
+  callback sees the token already `reused` (the order is pinned); a throwing callback leaves the
+  verdict `reused` with `alarmFailure` naming the error's name and code (never its message), and
+  the next reuse calls it again.
+- `keyProofMatches` (ruled, review 2): the vector's mode `key` proof → true; the server's label,
+  mode `launch`, another origin, other nonces or key, one character changed anywhere → false; one
+  `timingSafeEqual` on two 43-byte buffers; no comparison and no throw for a proof that is not a
+  string of 43 bytes, a nonce that is not one, an origin that is not a string, a secret of another
+  size.
+- `raiseAlarm` writes the time and keeps the first one (one transaction; ruled); the secret's bytes never appear in any string the module returns
+  except `wrapSecret`'s ciphertext (checked by searching every returned string, and every error
+  of each thrown case provoked with the secret or a token as an argument, for the secret's and the
+  token's base64url, base64, hex and decimal forms; ruled, review 2).
 
 **Done when:** the vector is pinned and every token state of S2 8.3's `GET /token/<id>` is reachable.
 
@@ -2205,6 +2257,10 @@ lock release on exit (task 21); size ownership (task 17).
 
 **Goal.** `src/window/pages.ts` and `src/window/size.ts`: every page's connection from the upgrade
 to `bye`, against `TerminalHub` and `ActionHandler` (fakes in the tests).
+
+The handshake checks a proof only through 2.8 (ruled, task 11): mode `key` with `keyProofMatches`,
+mode `launch` with `tokens.check`, never by a comparison of its own; `reused` closes with 4004
+whatever `alarmFailure` says, and a non-null `alarmFailure` is logged by that kind.
 
 **Exported API**
 
@@ -2831,7 +2887,9 @@ session into a terminal pane that says "terminal view comes with task 28".
 - Test: `test-page/shell.test.ts`, `test-page/auth.test.ts`
 
 **Behaviour.** `auth.js`: S2 8.2.2 steps 3–6 and "where the page keeps its key" — HMAC proofs,
-HKDF, `unwrapKey` into a non-extractable HMAC key, IndexedDB, the token used once. `connection.js`:
+HKDF, `unwrapKey` into a non-extractable HMAC key, IndexedDB, the token used once. The page
+encodes its nonce `cN` from its 32 random bytes in canonical base64url without padding, and takes
+the server's `sN` only in that form (the rule of 2.8's `isNonce`; ruled, task 11). `connection.js`:
 S2 6.3, 8.2.5 and the reload keys of S2 12.9 and 15.3 (a new connection, the server's proof, only
 then `location.reload()`); `input` split into messages of at most 64 KiB. `app.js`: `start`,
 `view` and `focus` messages; selection, zones (the terminal by default; a coloured top edge and

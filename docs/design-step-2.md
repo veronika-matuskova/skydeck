@@ -860,7 +860,9 @@ the server's proof.
    stored key, and replaces that key with the one it receives —, and `pP = HMAC-SHA256(K, "skydeck page 1\n" + mode + "\n" + sN + "\n" + cN + "\n" +
    origin)` (Web Crypto, available in a secure context). A `protocol` the server does not speak
    closes with 4426. Each side accepts the other's nonce only as exactly 32 bytes in base64url (43
-   characters); anything else closes the connection (4001 from the server).
+   characters), in the canonical form an encoder writes (the two bits the last character has to
+   spare are zero), so that one nonce has one text; anything else closes the connection (4001 from
+   the server).
 4. The server checks `pP` in constant time, against the secret or against each launch token it
    holds. A token that matches is marked **used** at once, in memory (the server is one process,
    so two pages racing with one token cannot both get it), and is remembered as used for the
@@ -911,7 +913,10 @@ proof equal to Node.js's — was run in headless Chromium in review (section 21)
 | `key` | `gIGCg4SFhoeIiYqL8-uwKEfl-QQONxqvTE8BdkWwIYHdwQkWN6_IJiXkHtLOZknj-CrYjV5peDDAyWDo` |
 
 **The alarm.** A second proof for a used token means that somebody else had the token, and so,
-probably, now has the secret (15.2). The server then records the time in `kv` `window_alarm`; the
+probably, now has the secret (15.2). The server then records the time in `kv` `window_alarm` —
+once: the time of the first such proof stays until `--new-secret` clears it, and a token presented
+again and again is recorded at its first reuse only, so a loop of proofs costs no store write; the
+verdict (4004) stands even when the record cannot be written, which the server logs. The
 page that got 4004 says `this window's launch address was used by another program, which may now
 have skydeck's key; run skydeck window --new-secret`; a `skydeck window` still waiting for that
 token (it asks the server, `GET /token/<id>`, 8.3) says the same and exits 1; and `doctor` reports
@@ -1226,7 +1231,7 @@ the first time one of them is known and never removed.
 
 | Key | Value |
 |---|---|
-| `window_secret` | The secret (15.2): 32 random bytes, base64url. Created on first need, inside one transaction (only one server runs, 5.2, but `--print-url` and the first server may race). |
+| `window_secret` | The secret (15.2): 32 random bytes, base64url. Created on first need, inside one transaction (only one server runs, 5.2, but `--print-url` and the first server may race). A stored value that is not 32 bytes in canonical base64url is replaced as if absent: it could prove nothing, and a page that held a key from it gets 4003 and asks for a new launch (8.2.2). |
 | `window_server` | The lock of the one server (5.2). |
 | `window_runtime_dir` | The runtime directory the server uses (4.2); kept while any keeper lives, so that commands and the next server find it; a record whose directory is missing or holds nothing alive is replaced at the next server start. |
 | `window_alarm` | The time a used launch token was presented a second time (8.2.2); cleared by `--new-secret`. Launch tokens themselves are never stored. |
