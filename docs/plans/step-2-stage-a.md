@@ -876,10 +876,25 @@ export function terminalKey(e) {}
 /** List-zone keys (S2 12.9): { kind: 'move', by: 1 | -1 | 'home' | 'end' | 'page-up' | 'page-down' } |
  *  { kind: 'fold' } | { kind: 'unfold' } | { kind: 'enter' } | { kind: 'filter' } |
  *  { kind: 'show-done' } | { kind: 'escape' } | { kind: 'reload' } |
- *  { kind: 'later', stage: 'D' } (A11: `l`, `g`, `n`, `p`, `d`, F2) | null */
+ *  { kind: 'later', stage: 'D' } (A11: `l`, `g`, `n`, `p`, `d`, F2) | null
+ *  `reload`: F5, Shift+F5, Ctrl+F5, Ctrl+R, Ctrl+Shift+R, BrowserRefresh alone / with Shift / with
+ *  Ctrl (ruled for task 31); windowChord gives `reload` for Ctrl+Shift+R and BrowserRefresh. */
 export function listKey(e) {}
-/** Whether the page cancels the key (preventDefault): exactly the keys it handles (Alt+F4 never). */
+/** Whether the page cancels the key (preventDefault): exactly the keys it handles (Alt+F4 never).
+ *  `handled` (boolean) means "the page acted on this key" (ruled for task 31). False for Alt+F4,
+ *  and for Ctrl+V in the terminal zone, whatever `handled` says; true, whatever `handled` says,
+ *  for every windowChord (`later` ones included), the list zone's reload keys, and the terminal
+ *  keys the page sends itself (terminalKey `{ send }`: Shift+Enter, Ctrl+Shift+V); for every
+ *  other key it returns `handled`. While a text field of the page has the keyboard (the filter,
+ *  the new form), app.js passes `handled = false` for the keys it leaves to the field, so that
+ *  `j` or `/` type there. In the terminal zone F5, Shift+F5, Ctrl+F5 and Ctrl+R go to the program
+ *  only while xterm.js has the keyboard; while something of the page has it (the find bar, the
+ *  New form, a card, the ended bar) app.js treats them as the page's reload (`listKey` gives
+ *  `reload` in any zone) and passes `handled = true` (ruled for task 31). */
 export function cancels(e, zone, handled) {}
+// Tasks 26 and 28: a key that two functions classify (Ctrl+Shift+V: windowChord `paste-raw` and
+// terminalKey `{ send: '\x16' }`; Ctrl+Shift+R and BrowserRefresh: windowChord and listKey
+// `reload`) is acted on once.
 
 // web/list.js — replaced by task 27
 /** @param {HTMLElement} root
@@ -1359,7 +1374,9 @@ cancels) and `web/format.js` (the age format of design 7.4). No DOM, no state: f
 // web/format.js
 /** design 7.4's compact age: < 60 s "<n>s", < 60 min "<n>m", < 48 h "<n>h", else "<n>d"; negative counts as 0. */
 export function formatAge(durationNs) {} // bigint → string
-/** The age between two decimal-string nanosecond times of the protocol. */
+/** The age between two decimal-string nanosecond times of the protocol. Never throws: when either
+ *  is not an integer in decimal digits (empty, null, malformed) it returns '' (ruled for task 31:
+ *  one bad value must not break the list). */
 export function ageBetween(nowNs, thenNs) {} // (string, string) → string
 ```
 
@@ -1369,13 +1386,15 @@ export function ageBetween(nowNs, thenNs) {} // (string, string) → string
   character is not a digit; letters, Ctrl+Shift+H included, by the character typed), in both zones;
   Ctrl+Shift+- is not the window's; `terminalKey`: Shift+Enter → `\n`, Ctrl+V → `'browser'`,
   Ctrl+Shift+V → `\x16`, Alt+F4 → `'browser'`, a plain letter → null; `listKey`: ↑ ↓ `j` `k` Home
-  End PgUp PgDn ← → Enter `/` `a` Esc, F5, Ctrl+R, Ctrl+Shift+R, Ctrl+F5; A11: Ctrl+Shift+P and
+  End PgUp PgDn ← → Enter `/` `a` Esc, F5, Ctrl+R, Ctrl+Shift+R, Ctrl+F5, Shift+F5 and BrowserRefresh
+  (alone, with Shift, with Ctrl; ruled for task 31); A11: Ctrl+Shift+P and
   Ctrl+Shift+J → `later` (E, B) in both zones, `l` `g` `n` `p` `d` F2 → `later` (D) in the list zone
   and null in the terminal zone; `cancels`: Alt+F4 never, a key neither zone uses never, F5 and
   Ctrl+R in the list zone yes and in the terminal zone no, Ctrl+Shift+R in both, every `later` key
   yes.
 - `format.test.ts`: `formatAge` equals `src/text/age.ts`'s for 0, 59 s, 60 s, 59 min, 47 h, 48 h,
-  400 days and a negative duration (A18); `ageBetween` on decimal strings above 2^53.
+  400 days and a negative duration (A18); `ageBetween` on decimal strings above 2^53, and `''`
+  for an empty, null or malformed time.
 
 **Done when:** the whole key policy of S2 12.9 and 9.1 is a tested pure function, on both layouts.
 
@@ -2544,8 +2563,10 @@ with `@import` and `@typedef`, ruling 5).
   server whose proof is wrong the page sends nothing
   after `hello` and shows the warning with the port.
 - `shell.test.ts`: the CSP lets the page's files load and an inline script injected into the
-  served HTML by a stand-in server does not run; F5, Ctrl+R, Ctrl+Shift+R and Ctrl+F5 in the list
-  zone, and Ctrl+Shift+R in the terminal zone, reload only after a server's proof, and not at
+  served HTML by a stand-in server does not run; F5, Shift+F5, Ctrl+R, Ctrl+Shift+R and Ctrl+F5
+  in the list zone, Ctrl+Shift+R in the terminal zone, BrowserRefresh in both if Playwright can
+  send it, and F5 and Ctrl+R in the terminal zone while the page, not xterm.js, has the keyboard
+  (the placeholder pane; the find bar from task 28 on), reload only after a server's proof, and not at
   all against a stand-in server without one; a dropped file does not navigate the window; the
   server stopped → the bar of S2 6.3 within 4 s; started again (same boot) → "skydeck's server
   restarted; your sessions kept running" and the list back; a server started with another boot

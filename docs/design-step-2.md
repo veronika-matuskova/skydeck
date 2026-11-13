@@ -1478,11 +1478,17 @@ window stayed open). So the page cancels exactly the keys it handles itself (thi
 keys below) and the keys it passes to the terminal (xterm.js cancels those it sends), and no
 other. Alt+F4 is never passed to the terminal and never cancelled, in either focus zone, so the
 window closes with it as any window does. Alt+Space never reaches the page (Windows keeps it for
-the window menu). The reload keys are the page's own in the list zone: F5, Ctrl+R, Ctrl+Shift+R and
-Ctrl+F5 make the page open a new connection, wait for the server's proof, and only then reload
-(15.3); in the terminal zone F5, Ctrl+R and Ctrl+F5 go to the program like any key, while
-Ctrl+Shift+R — for which xterm.js sends nothing and cancels nothing (9.1) — is the page's there
-too, so that Edge never reloads the page by itself. A key that neither zone uses
+the window menu). The reload keys are the page's own in the list zone: F5, Shift+F5, Ctrl+F5,
+Ctrl+R, Ctrl+Shift+R and the keyboard's BrowserRefresh key (alone, with Shift, with Ctrl) make the
+page open a new connection, wait for the server's proof, and only then reload (15.3); in the
+terminal zone F5, Shift+F5, Ctrl+F5 and Ctrl+R go to the program like any key while xterm.js has
+the keyboard, while Ctrl+Shift+R and BrowserRefresh — for which xterm.js sends nothing and cancels
+nothing (9.1) — are the page's there too, so that Edge never reloads the page by itself. When
+something of the page has the keyboard in the terminal zone (the find bar, the New form, a card,
+the ended bar), F5, Shift+F5, Ctrl+F5 and Ctrl+R are the page's own reload too, after the
+server's proof, exactly as in the list zone. That Chromium also reloads on Shift+F5
+and BrowserRefresh is from memory of its accelerator table, not verified; the page handling them
+is harmless if Edge does not. A key that neither zone uses
 keeps Edge's default: in the list zone Ctrl+W closes the window, which ends no session.
 
 | Key | Action |
@@ -1501,7 +1507,10 @@ keeps Edge's default: in the list zone Ctrl+W closes the window, which ends no s
 Letters are matched by the character the key types (Claude Code's own rule). A digit is matched by
 the character typed when that is a digit — on a Czech layout Shift on the number row types the
 digits — and otherwise by the physical key (`Digit1` … `Digit9`), because on a US layout Shift+1
-types `!`. No chord is matched by a physical key alone that could type something else on another
+types `!`. The Ctrl+Shift letter chords (and Ctrl+R, Ctrl+V) are matched by the typed Latin
+character, so on a layout whose letters are not Latin (Russian, Greek) they do not match — those
+chords do nothing (Ctrl+Shift+1–9 and Ctrl+Tab still work), Edge reloads on Ctrl+R by itself and
+Ctrl+V does not paste: a known limit, US and Czech are not affected. No chord is matched by a physical key alone that could type something else on another
 layout: that is why the help is Ctrl+Shift+H and not Ctrl+Shift+/, whose physical key types `-` on
 a Czech layout and would take Claude Code's Ctrl+Shift+-. If the user turns on the kitty keyboard
 protocol in a later xterm.js and binds a `ctrl+shift+<x>` in Claude Code, the window shadows that
@@ -1697,8 +1706,10 @@ Edge reaches that program instead.
   can pass both proofs along and then read and type everything, without ever learning the secret
   (15.1).
 - **A reload** fetches the page from whoever holds the port at that moment. The page therefore
-  handles F5, Ctrl+R, Ctrl+Shift+R and Ctrl+F5 itself in the list zone (12.9): it first opens a new
-  connection, waits for the server's proof, and only then reloads.
+  handles F5, Shift+F5, Ctrl+F5, Ctrl+R, Ctrl+Shift+R and the BrowserRefresh key (alone, with
+  Shift, with Ctrl) itself in the list zone, and in the terminal zone Ctrl+Shift+R and
+  BrowserRefresh always and the others while the page, not xterm.js, has the keyboard (12.9): it first opens a new connection, waits for the server's proof, and only then
+  reloads. (Shift+F5 and BrowserRefresh as Chromium reload keys are from memory, not verified.)
 
 Accepted: it takes a program that binds this one port at the moment a window is opened or
 reloaded, the window then shows that program's page rather than skydeck's, and the worst case —
@@ -1979,8 +1990,10 @@ In the browser suite, besides those:
   proof it sends nothing at all and shows the warning;
 - a dropped file does not navigate the window; OSC 52 from a hidden terminal does not reach the
   clipboard;
-- reload: F5, Ctrl+R, Ctrl+Shift+R and Ctrl+F5 in the list zone, and Ctrl+Shift+R in the terminal
-  zone, reload only after a server's proof, and not at all against
+- reload: F5, Shift+F5, Ctrl+R, Ctrl+Shift+R and Ctrl+F5 in the list zone, Ctrl+Shift+R in the
+  terminal zone, BrowserRefresh in both if Playwright can send it, and F5 and Ctrl+R in the
+  terminal zone while the page, not xterm.js, has the keyboard, reload only after a server's
+  proof, and not at all against
   a stand-in server without one;
 - a stand-in server holding the port serves a page that registers a service worker; after the real
   server is back, whether the worker still answers the next load (the 404 of 15.3) is recorded, so
@@ -2015,7 +2028,7 @@ folder, as in manual-checks.md.
 | # | Check | Stage | Decides |
 |---|---|---|---|
 | W1 | `skydeck window` opens an Edge app window that loads the page and connects. (That Edge reaches a server on `127.0.0.1` in WSL was verified by the user on 2026-11-13; this checks the command itself: the profile folder, the start, the wait for the page.) Write down how long Edge took from the command to the page's connection, cold and warm: the token and the command's wait last 30 seconds (5.1). | A | 5, 8.2.2 |
-| W2 | The chords of 12.9 that the key test of 2026-11-13 did not press reach the page and the browser does nothing: Ctrl+Shift+P, J, L, F, C, H and 1–9; and Alt+F4 still closes the window once the page is built (12.9). In a normal tab (`--print-url`), which chords the browser keeps. | A | 12.9 |
+| W2 | The chords of 12.9 that the key test of 2026-11-13 did not press reach the page and the browser does nothing: Ctrl+Shift+P, J, L, F, C, H and 1–9; and Alt+F4 still closes the window once the page is built (12.9). Whether Edge reloads on Shift+F5 and on the BrowserRefresh key (alone, with Shift, with Ctrl) when the page does not cancel them, and whether a cancelled BrowserRefresh still reloads (through `WM_APPCOMMAND`) (12.9, 15.3). In a normal tab (`--print-url`), which chords the browser keeps. | A | 12.9 |
 | W3 | The window has its own taskbar button with skydeck's icon (12.12), the same one after `skydeck window --restart` and after a WSL restart, and the title `(n) skydeck`; a second `skydeck window` opens no second window. | A, B, E | 5.1, 12.1, 12.12 |
 | W4 | **Real claude** in a window terminal: status line, subagent display, spinner, redraw on resize. Then `skydeck window --restart`: the screen is exactly what it was. | A | 7.2, 7.3 |
 | W5 | **Real claude**, the screen side answering alone: does Claude Code use synchronized output; does the OSC 11 answer make its automatic theme right; with an XTVERSION answer `xterm.js(6.0.0)` (a one-line change), any visible effect? | A | 9.3 |
@@ -2067,6 +2080,11 @@ sessions and to switch between their real terminals.
 - Terminals in the window: attach and switch by click, Ctrl+Shift+1–9, Ctrl+Tab and Ctrl+Shift+O,
   Ctrl+Shift+L; the keys of 9.1, find (9.7), links (9.6), the clipboard (9.5); the ended bar; the
   card for sessions running in another terminal; the key help.
+- Every key of 12.9 is the window's from stage A on, also those whose action comes in a later
+  stage, so that a key never means Edge's action in one stage and the window's in the next:
+  Ctrl+Shift+J (B), Ctrl+Shift+P (E) and, in the list, `l`, `g`, `n`, `p`, `d` and F2 (D) are
+  cancelled and show `<key>: comes in a later stage` in the key bar; the key help lists them as
+  coming later.
 - Resume into the window (resume card, Enter, double click) and New (12.6), through the shared code
   of 11.1.
 - Design 7.4's filter (`/`).
@@ -2084,7 +2102,7 @@ configuration `"terminal": "window"`, and `POST /resume`, `/new` and `/restore` 
 
 **Stage D — header editing and pull-request detail.** Label, group, note, done and undone, `+ PR`
 and removing one, in the window (12.5) with the Undo toast; the window's chip (12.3) and the
-pull-request lines of the header; the list keys `l`, `g`, `n`, `p`, `d`.
+pull-request lines of the header; the list keys `l`, `g`, `n`, `p`, `d` and F2.
 
 **Stage E — search.** Several words and the short id in the filter, done sessions while filtering,
 the chips, the quick switcher Ctrl+Shift+P, stacks in This week and Earlier (12.2, 12.8). The
