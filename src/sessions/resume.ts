@@ -5,9 +5,11 @@ import { isAbsolute } from 'node:path';
 import {
   buildNewCommand,
   buildResumeCommand,
-  parseLaunchArgs,
+  nameFlags,
+  sessionPickingFlags,
   unknownFlags,
 } from '../claude/launch.ts';
+import type { FoundFlag } from '../claude/launch.ts';
 import { isSessionId } from '../claude/live.ts';
 import { ResumeRefusedError, UsageError } from '../platform/errors.ts';
 import { NS_PER_SECOND } from '../platform/time.ts';
@@ -75,6 +77,8 @@ export function checkResumable(row: ListRow, files: Files): void {
   }
 }
 
+const STATE_CHANGED = "the session's state changed while preparing; run the command again";
+
 /** The time a lock holds (its kv value); null when the value is not one. */
 function lockTimeOf(value: string): Ns | null {
   return /^[0-9]{1,30}$/.test(value) ? BigInt(value) : null;
@@ -87,20 +91,37 @@ function freshAge(store: Store, sessionId: string, takenNs: Ns | null, nowNs: Ns
   }
   const ageNs = nowNs - takenNs;
   // A lock from far in the future cannot be from this clock: it would block for as long.
-  if (ageNs >= LOCK_TTL_NS || -ageNs >= LOCK_TTL_NS || store.hasStartSince(sessionId, takenNs)) {
+  if (
+    ageNs >= LOCK_TTL_NS ||
+    -ageNs >= LOCK_TTL_NS ||
+    store.hasProcessStartSince(sessionId, takenNs)
+  ) {
     return null;
   }
   return ageNs;
 }
 
+/** What a decision to resume was based on: the highest id among the session's events, null for none. */
+export interface SawEvents {
+  latestEventId: number | null;
+}
+
 /**
  * D16. In one store transaction (BEGIN IMMEDIATE, which no two skydecks hold at once): reads the
  * session's lock; when it holds — younger than LOCK_TTL_NS (a time less than LOCK_TTL_NS in the
- * future counts as now), and no start event for the session at or after it (hasStartSince) — throws
+ * future counts as now), and no start event for the session at or after it that names a real
+ * process (hasProcessStartSince: a pid that is not 0 and a process start time) — throws
  * ResumeRefusedError "<short> is being resumed (<n> s ago); try again in <m> s" (n rounded down, m
- * rounded up); otherwise writes the lock with the clock's time. A value that is not a time is stale.
+ * rounded up). A value that is not a time is stale.
+ *
+ * `saw` is what the decision to resume was made on, and is required so that no caller can skip the
+ * check. Still inside the transaction and before the lock is written, the session's latest event id
+ * is read again; when it is not the one `saw` names, another skydeck acted on the session since (it
+ * may have resumed it, and a sweep may have removed its lock as stale once its start event was
+ * ingested), and the call throws ResumeRefusedError "the session's state changed while preparing;
+ * run the command again". Otherwise writes the lock with the clock's time.
  */
-export function acquireLock(deck: Deck, sessionId: string): void {
+export function acquireLock(deck: Deck, sessionId: string, saw: SawEvents): void {
   const key = lockKey(sessionId);
   const { store, platform } = deck;
   store.transaction(() => {
@@ -113,6 +134,9 @@ export function acquireLock(deck: Deck, sessionId: string): void {
       throw new ResumeRefusedError(
         `${sessionId.slice(0, 8)} is being resumed (${ago} s ago); try again in ${wait} s`,
       );
+    }
+    if (store.latestEventIdOfSession(sessionId) !== saw.latestEventId) {
+      throw new ResumeRefusedError(STATE_CHANGED);
     }
     store.setKv(key, `${nowNs}`);
   });
@@ -159,18 +183,32 @@ export interface PreparedLaunch {
   kind: 'resume' | 'new';
 }
 
+/** Without the boot id every recorded process looks dead (5.5), so no session is seen running. */
+const BOOT_ID_UNKNOWN = 'cannot tell which sessions are running: the boot id could not be read';
+
 /**
- * checkResumable, acquireLock, buildResumeCommand(config.claudeCommand, row.session.launch, id,
- * row.label) — in this order, so a session that is refused takes no lock. `unknownFlags` is
- * unknownFlags(row.session.launch) ([] without a launch command).
+ * Refuses (ResumeRefusedError, first of all) when the row was derived without a boot id: the row's
+ * own value is used, never a second read that may have worked, so a failed read and a later
+ * successful one are not mixed. Then checkResumable, acquireLock (given the latest event id the
+ * row was derived from, so a session that has been acted on since is refused),
+ * buildResumeCommand(config.claudeCommand, row.session.launch, id, row.label) — in this order, so a
+ * session that is refused takes no lock. `unknownFlags` is unknownFlags(row.session.launch) ([]
+ * without a launch command).
+ *
+ * The row must come from rows loaded right after a refresh: a start event that is still a file in
+ * the spool is not in the row, and the lock's check of the latest event only sees ingested events.
+ * Callers go through `prepareResumeById` (resume-by-id.ts), which refreshes and loads first.
  */
 export function prepareResume(deck: Deck, row: ListRow): PreparedLaunch {
+  if (row.session.bootId === null) {
+    throw new ResumeRefusedError(BOOT_ID_UNKNOWN);
+  }
   checkResumable(row, deck.platform.files);
   const cwd = row.session.dir;
   if (cwd === null) {
     throw new Error('checkResumable let a session without a directory through'); // unreachable
   }
-  acquireLock(deck, row.id);
+  acquireLock(deck, row.id, { latestEventId: row.session.lastEventId });
   const launch = row.session.launch;
   const command = buildResumeCommand({
     claudeCommand: deck.config.claudeCommand,
@@ -189,27 +227,33 @@ export function prepareResume(deck: Deck, row: ListRow): PreparedLaunch {
 }
 
 /**
- * Refuses (UsageError naming it) a flag of `extra` that is on the flag table's removed list (7.6):
- * one that chooses which session claude opens, its name or where it runs. `-r <id>` or `-c` would
- * resume an existing session past the guard and the lock (principle 7). A cluster of short flags
- * is refused when any flag in it is (`-cp`). Arguments that are no flag, such as a prompt, pass.
+ * Refuses (UsageError naming it) a flag of `extra` that picks an existing session (7.7): `-r <id>`
+ * or `-c` would resume one past the guard and the lock (principle 7). Refuses `--name` / `-n` too:
+ * the label is given with `--label`, and skydeck passes it as the name itself. A cluster of short
+ * flags is refused when any flag in it is (`-cp`). The flags that only say where or how a new
+ * session starts (`--worktree`, `--tmux`, …) and arguments that are no flag, such as a prompt, pass.
  */
 function refuseSessionFlags(extra: readonly string[]): void {
-  for (const item of parseLaunchArgs(extra)) {
-    if (item.kind === 'flag' && item.spec !== null && item.spec.remove) {
-      const { names } = item.spec;
-      const shown = names.includes(item.name) ? item.name : `${item.name} (${names.at(-1)})`;
-      throw new UsageError(
-        `cannot pass ${shown} to claude: it chooses the session, its name or where it runs`,
-      );
-    }
+  const shown = ({ written, spec }: FoundFlag): string =>
+    spec.names.includes(written) ? written : `${written} (${spec.names.at(-1)})`;
+  const [picking] = sessionPickingFlags(extra);
+  if (picking !== undefined) {
+    throw new UsageError(
+      `cannot pass ${shown(picking)} to claude: it picks an existing session; use skydeck resume`,
+    );
+  }
+  const [name] = nameFlags(extra);
+  if (name !== undefined) {
+    throw new UsageError(
+      `cannot pass ${shown(name)} to claude: the label is given with --label, and skydeck passes it as the name`,
+    );
   }
 }
 
 /**
  * 7.7: platform.uuid(), stores label/group (cleaned) as meta, buildNewCommand, cwd = platform.cwd;
  * `flagsKnown` true, `unknownFlags` []. UsageError, and nothing stored, for a label or group that
- * cleanLabel/cleanGroup refuse and for an extra flag on the removed list (refuseSessionFlags). No
+ * cleanLabel/cleanGroup refuse and for an extra flag that refuseSessionFlags refuses. No
  * meta row is written when there is neither a label nor a group.
  */
 export function prepareNew(

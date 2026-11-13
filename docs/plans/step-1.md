@@ -138,7 +138,7 @@ Each is binding for the implementer. The last column names the task that records
 | D13 | `Context` gains `platform`; `Io` gains `isTTY`, `size`, `readLine`, `keys` (task 1, once). Commands open the database through `withDeck` (task 12). | Brief 18: the platform task extends `Context` once. | — |
 | D14 | `$VISUAL`, else `$EDITOR`, else `vi`; the value is split on spaces; the note file path is appended. | 7.1 only says `$EDITOR`. | 15 (7.1) |
 | D15 | The WezTerm adapter runs `wezterm cli --no-auto-start spawn`; when `wezterm` is not found and `$WSL_DISTRO_NAME` is set, it retries with `wezterm.exe`. | 13 "Open": tabs from WSL. | 7 (7.6) |
-| D16 | A resume lock is the `kv` entry `resume_lock:<session id>`, its value the creation time in ns (decimal). `acquireLock` reads it and, unless it holds, writes it inside one `store.transaction()` (BEGIN IMMEDIATE: one skydeck at a time); `sweepLocks` deletes the stale ones in one transaction at the end of every refresh (only when a first look without a transaction found some). Stale: 60 s old or older, dated 60 s or more in the future, a value that is not a time, or a `start` event of the session at or after it. `locksDir` stays in `Places` but holds no lock. | The database already serialises skydecks across processes; a lock file taken over without an atomic step would let two resumes both succeed (principle 7). Fake clock in tests. | 16 (7.6) |
+| D16 | A resume lock is the `kv` entry `resume_lock:<session id>`, its value the creation time in ns (decimal). `acquireLock` reads it and, unless it holds, writes it inside one `store.transaction()` (BEGIN IMMEDIATE: one skydeck at a time); `sweepLocks` deletes the stale ones in one transaction at the end of every refresh (only when a first look without a transaction found some). Stale: 60 s old or older, dated 60 s or more in the future, a value that is not a time, or a `start` event of the session at or after it that names a real process (pid not 0, with a process start time: `hasProcessStartSince`). `locksDir` stays in `Places` but holds no lock. `prepareResume` hands `acquireLock` the id of the latest event of the session that its row was derived from (`DerivedSession.lastEventId`, null for none); inside the transaction, before it writes, `acquireLock` reads that id again and refuses (exit 4) when it differs. `prepareResume` refuses first when the row's own boot id (`DerivedSession.bootId`, the one the rows were derived with) is null. `prepareResumeById` refreshes and loads the rows itself right before it calls `prepareResume`, and is the entry point of every caller. | The database already serialises skydecks across processes; a lock file taken over without an atomic step would let two resumes both succeed (principle 7). Without the re-check, a skydeck that looked at the session (not running), then lost a few seconds, could take a lock that a sweep had just removed for another skydeck's resume (its start event had been ingested) and resume the session a second time. Without the boot id every recorded process looks dead and a running session cannot be seen; the row's value is used so that a failed read and a later successful one are never mixed. A start event without a process (pid 0, or no start time) cannot be the claude that a resume started, so it must not release a lock. A start event still in the spool is invisible to a row loaded before it and to the store check of the lock, so the guard refreshes and loads by itself. Fake clock in tests. | 16 (7.6) |
 | D17 | `--all` restore entries are preselected relative to the last event of *their own* boot. | 7.8 defines it for the default set only. | 18 (7.8) |
 | D18 | Arguments are read as Claude Code's own parser reads them: a several-value flag takes the next argument whatever it is and then the following ones up to the next flag-like one (starts with `-`, more than one character, so a lone `-` is a value); `--flag=value` consumes nothing more; a short flag takes the rest of its token as its value (`-rabc`), and a token of no-value short flags (`-cp`) is one flag; `--` ends the flags and everything after it is positional. A flag that is in no table is stored as its bare name and not passed on at resume: what follows it cannot be classified. | 7.6 "several values"; principle 4. | 2 (7.6, 5.3, principle 4) |
 | D19 | Restore's selection prompt: a numbered list, the user types numbers to toggle, an empty line confirms, `q` cancels (exit 5). | 7.8 says only "confirms or changes". | 18 (7.8) |
@@ -709,6 +709,10 @@ export interface Store {
   processHasLaunch(bootId: string, pid: number, procStart: number | null): boolean;
   /** Whether a 'start' event for the session exists with time_ns >= sinceNs. */
   hasStartSince(sessionId: string, sinceNs: Ns): boolean;
+  /** As hasStartSince, but only a start of a real process counts: pid not 0 and a process start time (proc_start not NULL). A start the hook wrote without them names no process that could hold the session. */
+  hasProcessStartSince(sessionId: string, sinceNs: Ns): boolean;
+  /** The highest id among the events that name the session (whatever their time or kind); null when there is none. */
+  latestEventIdOfSession(sessionId: string): number | null;
   /** All links ordered by time_ns. */
   links(): LinkRow[];
 
@@ -786,6 +790,13 @@ export interface FlagSpec {
   names: readonly string[];       // every spelling, long and short
   shape: FlagShape;
   remove: boolean;                // removed when building a resume command (7.6)
+  /**
+   * The flag picks an existing session or replays one (`--resume`, `--continue`, `--fork-session`,
+   * the deep-link flags, …), so `skydeck new` refuses it (7.7). Always a removed flag. A removed
+   * flag that only says where or how a NEW session starts (`--worktree`, `--tmux`, the cloud flags)
+   * is `false`: a resume drops it, but `new` may pass it.
+   */
+  picksSession: boolean;
   path: boolean;                  // values are paths made absolute at ingest (5.3)
 }
 
@@ -796,58 +807,58 @@ export interface FlagSpec {
  */
 export const FLAGS: readonly FlagSpec[] = [
   // removed at resume (7.6)
-  { names: ['-r', '--resume'], shape: 'optional', remove: true, path: false },
-  { names: ['-c', '--continue'], shape: 'none', remove: true, path: false },
-  { names: ['--session-id'], shape: 'one', remove: true, path: false },
-  { names: ['--fork-session'], shape: 'none', remove: true, path: false },
-  { names: ['-n', '--name'], shape: 'one', remove: true, path: false },
-  { names: ['-w', '--worktree'], shape: 'optional', remove: true, path: false },
-  { names: ['--bg', '--background'], shape: 'none', remove: true, path: false },
-  { names: ['--from-pr'], shape: 'optional', remove: true, path: false },
+  { names: ['-r', '--resume'], shape: 'optional', remove: true, picksSession: true, path: false },
+  { names: ['-c', '--continue'], shape: 'none', remove: true, picksSession: true, path: false },
+  { names: ['--session-id'], shape: 'one', remove: true, picksSession: true, path: false },
+  { names: ['--fork-session'], shape: 'none', remove: true, picksSession: true, path: false },
+  { names: ['-n', '--name'], shape: 'one', remove: true, picksSession: false, path: false },
+  { names: ['-w', '--worktree'], shape: 'optional', remove: true, picksSession: false, path: false },
+  { names: ['--bg', '--background'], shape: 'none', remove: true, picksSession: false, path: false },
+  { names: ['--from-pr'], shape: 'optional', remove: true, picksSession: true, path: false },
   // they choose which session is opened or where it runs (D28); --tmux needs -w, which is removed
-  { names: ['--tmux'], shape: 'none', remove: true, path: false },
-  { names: ['--teleport'], shape: 'optional', remove: true, path: false },
-  { names: ['--cloud', '--remote'], shape: 'optional', remove: true, path: false },
-  { names: ['--desktop'], shape: 'none', remove: true, path: false },
-  { names: ['--environment', '--pool'], shape: 'one', remove: true, path: false },
+  { names: ['--tmux'], shape: 'none', remove: true, picksSession: false, path: false },
+  { names: ['--teleport'], shape: 'optional', remove: true, picksSession: true, path: false },
+  { names: ['--cloud', '--remote'], shape: 'optional', remove: true, picksSession: false, path: false },
+  { names: ['--desktop'], shape: 'none', remove: true, picksSession: false, path: false },
+  { names: ['--environment', '--pool'], shape: 'one', remove: true, picksSession: false, path: false },
   // they choose a session or act once (D28)
-  { names: ['--rewind-files'], shape: 'one', remove: true, path: false },
-  { names: ['--resume-session-at'], shape: 'one', remove: true, path: false },
-  { names: ['--resume-drops-turn'], shape: 'one', remove: true, path: false },
-  { names: ['--reply-on-resume'], shape: 'none', remove: true, path: false },
-  { names: ['--attach-serve'], shape: 'one', remove: true, path: false },
-  { names: ['--session-began-as-copy'], shape: 'one', remove: true, path: false },
-  { names: ['--init-only'], shape: 'none', remove: true, path: false },
-  { names: ['--handle-uri'], shape: 'one', remove: true, path: false },
+  { names: ['--rewind-files'], shape: 'one', remove: true, picksSession: true, path: false },
+  { names: ['--resume-session-at'], shape: 'one', remove: true, picksSession: true, path: false },
+  { names: ['--resume-drops-turn'], shape: 'one', remove: true, picksSession: true, path: false },
+  { names: ['--reply-on-resume'], shape: 'none', remove: true, picksSession: true, path: false },
+  { names: ['--attach-serve'], shape: 'one', remove: true, picksSession: true, path: false },
+  { names: ['--session-began-as-copy'], shape: 'one', remove: true, picksSession: true, path: false },
+  { names: ['--init-only'], shape: 'none', remove: true, picksSession: false, path: false },
+  { names: ['--handle-uri'], shape: 'one', remove: true, picksSession: true, path: false },
   // they only work with the cloud flags above, which are removed
-  { names: ['--ref'], shape: 'one', remove: true, path: false },
-  { names: ['--on-branch'], shape: 'one', remove: true, path: false },
-  { names: ['--correlation-id'], shape: 'one', remove: true, path: false },
-  { names: ['--forward-home-settings'], shape: 'one', remove: true, path: false },
+  { names: ['--ref'], shape: 'one', remove: true, picksSession: false, path: false },
+  { names: ['--on-branch'], shape: 'one', remove: true, picksSession: false, path: false },
+  { names: ['--correlation-id'], shape: 'one', remove: true, picksSession: false, path: false },
+  { names: ['--forward-home-settings'], shape: 'one', remove: true, picksSession: false, path: false },
   // one-time actions
-  { names: ['--init'], shape: 'none', remove: true, path: false },
-  { names: ['--maintenance'], shape: 'none', remove: true, path: false },
+  { names: ['--init'], shape: 'none', remove: true, picksSession: false, path: false },
+  { names: ['--maintenance'], shape: 'none', remove: true, picksSession: false, path: false },
   // deep-link launches carry prompt text, which skydeck never stores (principle 4)
-  { names: ['--deep-link-origin'], shape: 'none', remove: true, path: false },
-  { names: ['--deep-link-repo'], shape: 'one', remove: true, path: false },
-  { names: ['--deep-link-last-fetch'], shape: 'one', remove: true, path: false },
-  { names: ['--deep-link-cwd-b64'], shape: 'one', remove: true, path: false },
-  { names: ['--prefill'], shape: 'one', remove: true, path: false },
-  { names: ['--prefill-b64'], shape: 'one', remove: true, path: false },
+  { names: ['--deep-link-origin'], shape: 'none', remove: true, picksSession: true, path: false },
+  { names: ['--deep-link-repo'], shape: 'one', remove: true, picksSession: true, path: false },
+  { names: ['--deep-link-last-fetch'], shape: 'one', remove: true, picksSession: true, path: false },
+  { names: ['--deep-link-cwd-b64'], shape: 'one', remove: true, picksSession: true, path: false },
+  { names: ['--prefill'], shape: 'one', remove: true, picksSession: true, path: false },
+  { names: ['--prefill-b64'], shape: 'one', remove: true, picksSession: true, path: false },
   // path flags (5.3), kept
-  { names: ['--mcp-config'], shape: 'many', remove: false, path: true },
-  { names: ['--add-dir'], shape: 'many', remove: false, path: true },
-  { names: ['--settings'], shape: 'one', remove: false, path: true },
-  { names: ['--plugin-dir'], shape: 'one', remove: false, path: true },
-  { names: ['--plugin-dir-no-mcp'], shape: 'one', remove: false, path: true },
-  { names: ['--system-prompt-file'], shape: 'one', remove: false, path: true },
-  { names: ['--append-system-prompt-file'], shape: 'one', remove: false, path: true },
-  { names: ['--append-subagent-system-prompt-file'], shape: 'one', remove: false, path: true },
+  { names: ['--mcp-config'], shape: 'many', remove: false, picksSession: false, path: true },
+  { names: ['--add-dir'], shape: 'many', remove: false, picksSession: false, path: true },
+  { names: ['--settings'], shape: 'one', remove: false, picksSession: false, path: true },
+  { names: ['--plugin-dir'], shape: 'one', remove: false, picksSession: false, path: true },
+  { names: ['--plugin-dir-no-mcp'], shape: 'one', remove: false, picksSession: false, path: true },
+  { names: ['--system-prompt-file'], shape: 'one', remove: false, picksSession: false, path: true },
+  { names: ['--append-system-prompt-file'], shape: 'one', remove: false, picksSession: false, path: true },
+  { names: ['--append-subagent-system-prompt-file'], shape: 'one', remove: false, picksSession: false, path: true },
   // kept, several values
-  { names: ['--allowedTools', '--allowed-tools'], shape: 'many', remove: false, path: false },
-  { names: ['--disallowedTools', '--disallowed-tools'], shape: 'many', remove: false, path: false },
+  { names: ['--allowedTools', '--allowed-tools'], shape: 'many', remove: false, picksSession: false, path: false },
+  { names: ['--disallowedTools', '--disallowed-tools'], shape: 'many', remove: false, picksSession: false, path: false },
   ...['--tools', '--betas', '--file', '--channels', '--dangerously-load-development-channels'].map(
-    (name) => ({ names: [name], shape: 'many' as const, remove: false, path: false }),
+    (name) => ({ names: [name], shape: 'many' as const, remove: false, picksSession: false, path: false }),
   ),
   // kept, one value
   ...[
@@ -902,21 +913,22 @@ export const FLAGS: readonly FlagSpec[] = [
     '--messaging-socket-path',
     '--project-config-root',
     '--runner-declares',
-  ].map((name) => ({ names: [name], shape: 'one' as const, remove: false, path: false })),
+  ].map((name) => ({ names: [name], shape: 'one' as const, remove: false, picksSession: false, path: false })),
   // kept, optional value
-  { names: ['-d', '--debug'], shape: 'optional', remove: false, path: false },
-  { names: ['--remote-control', '--rc'], shape: 'optional', remove: false, path: false },
+  { names: ['-d', '--debug'], shape: 'optional', remove: false, picksSession: false, path: false },
+  { names: ['--remote-control', '--rc'], shape: 'optional', remove: false, picksSession: false, path: false },
   ...['--project', '--prompt-suggestions'].map((name) => ({
     names: [name],
     shape: 'optional' as const,
     remove: false,
+    picksSession: false,
     path: false,
   })),
   // kept, no value
-  { names: ['-p', '--print'], shape: 'none', remove: false, path: false },
-  { names: ['-h', '--help'], shape: 'none', remove: false, path: false },
-  { names: ['-v', '--version', '-V'], shape: 'none', remove: false, path: false },
-  { names: ['-d2e', '--debug-to-stderr'], shape: 'none', remove: false, path: false },
+  { names: ['-p', '--print'], shape: 'none', remove: false, picksSession: false, path: false },
+  { names: ['-h', '--help'], shape: 'none', remove: false, picksSession: false, path: false },
+  { names: ['-v', '--version', '-V'], shape: 'none', remove: false, picksSession: false, path: false },
+  { names: ['-d2e', '--debug-to-stderr'], shape: 'none', remove: false, picksSession: false, path: false },
   ...[
     '--verbose',
     '--bare',
@@ -949,7 +961,7 @@ export const FLAGS: readonly FlagSpec[] = [
     '--ax-screen-reader',
     '--plan-mode-required',
     '--hard-fail',
-  ].map((name) => ({ names: [name], shape: 'none' as const, remove: false, path: false })),
+  ].map((name) => ({ names: [name], shape: 'none' as const, remove: false, picksSession: false, path: false })),
 ];
 
 export type ParsedArg =
@@ -1020,6 +1032,21 @@ export function unknownFlags(argv: readonly string[]): string[];
  * the RECORDED command: storableArgv drops a cluster that holds a removed flag (`-cp`) as a whole.
  */
 export function isPrintRun(argv: readonly string[]): boolean;
+
+/** A flag found in an argument list: as written (a cluster of short flags: the whole token), and its table entry. */
+export interface FoundFlag { written: string; spec: FlagSpec }
+/**
+ * The flags in `args` (WITHOUT the program name) with `picksSession: true`, in order: alone, as
+ * `--flag=value`, or inside a cluster of short flags (`-cp`: each flag of the cluster is looked at,
+ * and `written` is the whole token `-cp`). The flags read before the first unknown letter of a
+ * cluster count too (`-cZ`, `-cZfix`, `-pcZ`, `-c-frob`, `-c-frob=x`: the token is an unknown flag
+ * for the parser, but it does start with `-c`; `written` is the whole token). A flag that is
+ * another flag's value, or comes after `--`, is not one. `skydeck new` refuses these (7.7); `--worktree` and the other removed flags that only
+ * say where or how a new session starts are not found.
+ */
+export function sessionPickingFlags(args: readonly string[]): FoundFlag[];
+/** The `--name` / `-n` flags in `args`, found the same way (`skydeck new` refuses them too, 7.7). */
+export function nameFlags(args: readonly string[]): FoundFlag[];
 
 export interface ResumeCommand { argv: string[]; flagsKnown: boolean }
 /**
@@ -1492,6 +1519,8 @@ export interface DerivedSession {
   launch: string[] | null;
   transcript: TranscriptRow | null;
   lastHolding: LastHolding | null;
+  lastEventId: number | null;     // the highest id among the events naming the session; null: known from a transcript only (a resume decides on it, 7.6)
+  bootId: string | null;          // the boot id the holders were judged against (= DeriveInput.bootId); null: it could not be read, and no process looked alive (a resume refuses, 7.6)
   doneAtNs: Ns | null;
   hidden: boolean;                // done, and no activity after doneAtNs (7.1)
 }
@@ -1552,6 +1581,7 @@ export interface DeriveInput {
   transcripts: readonly TranscriptRow[];
   metas: readonly SessionMeta[];
   liveFiles: readonly LiveFile[];       // every file read, trusted or not
+  bootId: string | null;                // the boot id `isAlive` judges against, read once; null: it could not be read
   isAlive: (p: ProcessKey) => boolean;
   isTrusted: (f: LiveFile) => boolean;
   nowNs: Ns;
@@ -1628,7 +1658,8 @@ export function flatRows(model: ListModel): ListRow[];
 // src/sessions/load.ts
 /**
  * Builds DeriveInput from the store (events, links, transcripts, allMeta), readLiveFiles,
- * isAlive/isLiveFileTrusted with proc and proc.bootId(), clock now, and
+ * isAlive/isLiveFileTrusted with proc and proc.bootId() (read ONCE per load; the value is also
+ * DeriveInput.bootId, so the rows carry the boot id they were judged with), clock now, and
  * cleanupPeriodDays(content of settingsPath(claudeHome)); returns deriveSessions(input).
  * A settings file that cannot be read counts as "no cleanupPeriodDays" (30 days): the list does
  * not stop for Claude Code's own file. Reads only; it does not refresh.
@@ -1694,18 +1725,45 @@ export function checkResumable(row: ListRow, files: Files): void;
 /**
  * D16. In one store.transaction(): reads the lock; when it holds — younger than LOCK_TTL_NS (a time
  * less than LOCK_TTL_NS in the future counts as now) and no start event for the session at or after
- * it (hasStartSince) — ResumeRefusedError "<short> is being resumed (<n> s ago); try again in <m> s"
- * (n rounded down, m rounded up); otherwise it writes the lock with the clock's time. A value that
- * is not a time is stale.
+ * it that names a real process (hasProcessStartSince: a pid that is not 0 and a process start time;
+ * a start the hook wrote without them releases nobody's lock) — ResumeRefusedError "<short> is being resumed (<n> s ago); try again in <m> s"
+ * (n rounded down, m rounded up). A value that is not a time is stale. `saw` is what the decision to
+ * resume was made on (the highest id among the session's events, null for none); it is required, so
+ * that no caller can skip the check: still inside the transaction, and before the lock is written,
+ * the session's latest event id is read again
+ * (store.latestEventIdOfSession), and when it is not `saw.latestEventId` the call throws
+ * ResumeRefusedError "the session's state changed while preparing; run the command again" and writes
+ * nothing. Otherwise it writes the lock with the clock's time.
  */
-export function acquireLock(deck: Deck, sessionId: string): void;
+export interface SawEvents { latestEventId: number | null }
+export function acquireLock(deck: Deck, sessionId: string, saw: SawEvents): void;
 /** Deletes the locks that are stale by the same rules; returns how many. Looks first without a transaction (no stale lock: no write transaction, so a refresh with nothing to sweep takes no write lock), then reads again and deletes inside one store.transaction(). */
 export function sweepLocks(deck: Deck): number;
 
 export interface PreparedLaunch { sessionId: string; cwd: string; argv: string[]; flagsKnown: boolean; unknownFlags: string[]; kind: 'resume' | 'new' }   // kind: ruled in review
-/** checkResumable, acquireLock, buildResumeCommand(config.claudeCommand, row.session.launch, id, row.label); `unknownFlags` is unknownFlags(row.session.launch) ([] without a launch command). */
+/**
+ * First, ResumeRefusedError "cannot tell which sessions are running: the boot id could not be read"
+ * when `row.session.bootId` is null: the boot id the row was derived with, never a second read of
+ * `proc.bootId()` (a failed read and a later successful one must not be mixed; without the boot id
+ * every recorded process looks dead, so the row cannot show a running session); then checkResumable, acquireLock(deck, row.id, { latestEventId:
+ * row.session.lastEventId }) — the lock transaction compares it with the store, so a session that
+ * another skydeck acted on since the row was read is refused — and buildResumeCommand(config.claudeCommand,
+ * row.session.launch, id, row.label); `unknownFlags` is unknownFlags(row.session.launch) ([] without a launch command).
+ * `prepareNew` does not read the boot id: it resumes nothing. The row must come from rows loaded
+ * right after a refresh: a start event that is still a file in the spool is not in it, and the
+ * lock's check of the latest event only sees ingested events. Callers use `prepareResumeById`.
+ */
 export function prepareResume(deck: Deck, row: ListRow): PreparedLaunch;
-/** 7.7: platform.uuid(), stores label/group (cleaned) as meta (no meta row when both are null), buildNewCommand, cwd = platform.cwd; `flagsKnown` true, `unknownFlags` [], `kind` 'new' (prepareResume: 'resume'). UsageError, and nothing stored, for a label or group cleanLabel/cleanGroup refuse, and for an `extra` flag on the flag table's removed list, read with parseLaunchArgs (also inside a short-flag cluster such as `-cp`): "cannot pass <flag>[ (<long name>)] to claude: it chooses the session, its name or where it runs". A prompt (a positional argument) is allowed. */
+// src/sessions/resume-by-id.ts (it imports refresh.ts, which imports resume.ts: a separate file avoids the cycle)
+/**
+ * The one entry point for starting a resume (the `resume` command, the interactive list, restore): the
+ * guard owns its freshness. `refresh(deck)`, `loadRows(deck)`, the row whose id is `sessionId`
+ * (RefError "no session matches '<id>'" when there is none; a prefix, a label or an upper-case id names
+ * nothing), then `prepareResume(deck, row)` — in this order. Callers resolve what the user pointed at
+ * to a whole session id first, and pass the id, never a row they loaded earlier.
+ */
+export function prepareResumeById(deck: Deck, sessionId: string): PreparedLaunch;
+/** 7.7: platform.uuid(), stores label/group (cleaned) as meta (no meta row when both are null), buildNewCommand, cwd = platform.cwd; `flagsKnown` true, `unknownFlags` [], `kind` 'new' (prepareResume: 'resume'). UsageError, and nothing stored, for a label or group cleanLabel/cleanGroup refuse, for an `extra` flag that picks an existing session (`sessionPickingFlags`, also inside a short-flag cluster such as `-cp`): "cannot pass <flag>[ (<long name>)] to claude: it picks an existing session; use skydeck resume", and for `--name` / `-n` (`nameFlags`): "cannot pass <flag>[ (<long name>)] to claude: the label is given with --label, and skydeck passes it as the name". The other removed flags (`--worktree`/`-w`, `--tmux`, `--bg`, `--init`, `--init-only`, `--maintenance`, `--desktop`, the cloud flags) only say where or how a new session starts, so they pass, as does a prompt (a positional argument). */
 export function prepareNew(deck: Deck, options: { label: string | null; group: string | null; extra: readonly string[] }): PreparedLaunch;
 ```
 
@@ -2362,7 +2420,7 @@ export function procStartFromStat(line: string): number | null;
 export function argvFromCmdline(bytes: Uint8Array): string[];
 // src/claude/launch.ts — FLAGS exactly as in 2.5.2
 export type FlagShape = 'none' | 'one' | 'optional' | 'many';
-export interface FlagSpec { names: readonly string[]; shape: FlagShape; remove: boolean; path: boolean }
+export interface FlagSpec { names: readonly string[]; shape: FlagShape; remove: boolean; picksSession: boolean; path: boolean }
 export const FLAGS: readonly FlagSpec[];
 export type ParsedArg =
   | { kind: 'flag'; spec: FlagSpec | null; name: string; tokens: string[]; values: string[] }
@@ -2372,6 +2430,9 @@ export function absolutizePathFlags(argv: readonly string[], cwd: string | null,
 export function storableArgv(argv: readonly string[]): string[];
 export function unknownFlags(argv: readonly string[]): string[];
 export function isPrintRun(argv: readonly string[]): boolean;
+export interface FoundFlag { written: string; spec: FlagSpec }
+export function sessionPickingFlags(args: readonly string[]): FoundFlag[];   // picksSession flags, clusters included (2.5.2)
+export function nameFlags(args: readonly string[]): FoundFlag[];             // --name / -n
 export interface ResumeCommand { argv: string[]; flagsKnown: boolean }
 export function buildResumeCommand(input: { claudeCommand: string; launch: readonly string[] | null; sessionId: string; label: string | null }): ResumeCommand;
 export function buildNewCommand(input: { claudeCommand: string; sessionId: string; label: string | null; extra: readonly string[] }): string[];
@@ -2410,6 +2471,9 @@ null for: 'https://gitlab.com/o/r/pull/1', 'https://github.com/o/r/issues/1', 'h
 `--mcp-config --add-dir --settings --plugin-dir --plugin-dir-no-mcp --system-prompt-file --append-system-prompt-file --append-subagent-system-prompt-file`;
 the names with `remove: true` are exactly
 `-r --resume -c --continue --session-id --fork-session -n --name -w --worktree --tmux --bg --background --from-pr --teleport --cloud --remote --desktop --environment --pool --rewind-files --resume-session-at --resume-drops-turn --reply-on-resume --attach-serve --session-began-as-copy --init-only --handle-uri --ref --on-branch --correlation-id --forward-home-settings --init --maintenance --deep-link-origin --deep-link-repo --deep-link-last-fetch --deep-link-cwd-b64 --prefill --prefill-b64`;
+the names with `picksSession: true` are exactly
+`-r --resume -c --continue --session-id --fork-session --from-pr --teleport --rewind-files --resume-session-at --resume-drops-turn --reply-on-resume --attach-serve --session-began-as-copy --handle-uri --deep-link-origin --deep-link-repo --deep-link-last-fetch --deep-link-cwd-b64 --prefill --prefill-b64`
+(each of them has `remove: true`; the other removed flags, `-n`/`--name` included, have `picksSession: false`);
 `--remote` shares its spec with `--cloud`, and `--pool` with `--environment`. The fixture
 `test/fixtures/claude/flags-2.1.323.json` is Claude Code 2.1.323's own table (every spelling of
 every root flag, hidden ones included, with its shape): FLAGS has every name of it with the same
@@ -2457,6 +2521,26 @@ flag of its own and not `-d` with a value, `--max-turns` takes one.
 
 The `spec` of a cluster is that of its first flag with `remove: true`, else of its last flag:
 `-pc`, `-rabc` and `-c-model` have `remove: true`, `-pv`, `-dv`, `-p-` and `-p-model` do not.
+
+`sessionPickingFlags` and `nameFlags` (`written`, first spelling of the flag found):
+
+```
+sessionPickingFlags, for every flag with picksSession (each spelling; V = [] for shape none, else ['v']):
+  [name, ...V]            → [[name, flag]]
+  [`${name}=v`]           (long flags with a value) → [[name, flag]]
+  [`-p${x}`], [`-${x}p`]  (no-value short flags, x = the letter) → [[`-p${x}`, flag]], [[`-${x}p`, flag]]
+  [`-${x}abc`]            (short flags with a value) → [[`-${x}`, flag]]
+['-pr','abc'] → [['-pr','-r']]      ['-c-model','opus'] → [['-c-model','-c']]      ['-cw'] → [['-cw','-c']]
+['-w','feat','--model','x','fix the bug'], ['--worktree'], ['-pw'], ['-wfeat'], and every other removed flag
+  that is not picksSession (with a value where it takes one)                                        → []
+['--model','-c'], ['-wc'], ['-nc'], ['--model','x','--','-r','abc']                                → []   (a value, or after `--`)
+['--worktree','-c']                                                                                  → [['-c','-c']]
+['-c','--model','x','--resume','a','--fork-session'] → [['-c','-c'],['--resume','-r'],['--fork-session','--fork-session']]
+['-cZ'], ['-cZfix'], ['-pcZ','x'], ['-c-frob','x'], ['-c-frob=x'], ['-pc-frob']  → [[<the token>,'-c']]   (the flags read before the unknown part)
+['-Zc'], ['-pZ'], ['-p-frob'], ['--frob','x']                                       → []   (nothing that picks a session was read before it)
+nameFlags: ['-n','x'], ['--name=x'], ['-nx'] → [['-n','-n']], [['--name','-n']], [['-n','-n']];  ['-pn','x'] → [['-pn','-n']];
+  ['-w','n','--model','-n','-r','abc'] and ['--model','x','--','-n','x'] → []
+```
 
 `absolutizePathFlags` (`exists` = membership in a given set):
 
@@ -2751,6 +2835,8 @@ export interface Store {
   latestEventOfProcess(bootId: string, pid: number, procStart: number | null, beforeNs: Ns): EventRow | null;
   processHasLaunch(bootId: string, pid: number, procStart: number | null): boolean;
   hasStartSince(sessionId: string, sinceNs: Ns): boolean;
+  hasProcessStartSince(sessionId: string, sinceNs: Ns): boolean;
+  latestEventIdOfSession(sessionId: string): number | null;
   links(): LinkRow[];
   meta(sessionId: string): SessionMeta | null;
   allMeta(): SessionMeta[];
@@ -2796,6 +2882,10 @@ do not exist in the schema. Events are bound with `bigint` for every `*_ns` colu
   with `procStart null` it matches only rows whose `proc_start` is NULL; another boot → `null`.
 - `processHasLaunch`: a process whose only event has `argv null` → `false`; add one with argv → `true`.
 - With a start event at `T0`: `hasStartSince(S1, T0)` → `true`; `hasStartSince(S1, T0 + 1n)` → `false`; an `end` row does not count.
+- `hasProcessStartSince`: as `hasStartSince` (the same three cases), and a start with `pid 0`, one with `procStart null` and one with both → `false`
+  until a start with a pid and a `procStart` exists → `true` (`hasStartSince` counts all of them).
+- `latestEventIdOfSession`: `null` for a session without events (another session's events do not count); otherwise the highest id of
+  its events whatever their times and kinds (an `end` or an `observed` event counts, a later id with an earlier time wins).
 - `insertLink({ eventId: 1, fromSession: S1, toSession: S2, kind: 'clear', timeNs: T0 })` → `links()` returns it;
   a link whose `eventId` has no event → throws (foreign key).
 - `updateMeta(S1, { label: 'x' }, T0)` creates `{ label 'x', group null, note null, doneAtNs null, createdNs T0, updatedNs T0 }`;
@@ -3483,13 +3573,13 @@ export interface LastHolding { process: ProcessKey; alive: boolean; endedAtNs: N
 export interface DerivedSession {
   id: string; state: State; stateDetail: string | null; sinceNs: Ns; lastActivityNs: Ns; firstSeenNs: Ns;
   holders: Holder[]; marks: Mark[]; continuedFrom: string | null; dir: string | null; launch: string[] | null;
-  transcript: TranscriptRow | null; lastHolding: LastHolding | null; doneAtNs: Ns | null; hidden: boolean;
+  transcript: TranscriptRow | null; lastHolding: LastHolding | null; lastEventId: number | null; bootId: string | null; doneAtNs: Ns | null; hidden: boolean;
 }
 // derive.ts
 export interface DeriveInput {
   events: readonly EventRow[]; links: readonly LinkRow[]; transcripts: readonly TranscriptRow[];
   metas: readonly SessionMeta[]; liveFiles: readonly LiveFile[];
-  isAlive: (p: ProcessKey) => boolean; isTrusted: (f: LiveFile) => boolean;
+  bootId: string | null; isAlive: (p: ProcessKey) => boolean; isTrusted: (f: LiveFile) => boolean;
   nowNs: Ns; retentionDays: number;
 }
 export function deriveSessions(input: DeriveInput): DerivedSession[];
@@ -3529,6 +3619,10 @@ export function deriveSessions(input: DeriveInput): DerivedSession[];
   `mtimeNs < nowNs − max(retentionDays − 5, 0) days`. `duplicate` when 2+ holders.
 - **dir**: transcript `firstCwd`, else `cwd` of the earliest event having one, else null.
   **launch**: `argv` of the latest `start` or `observed` event having one.
+- **bootId**: `input.bootId`, copied to every session (the boot id the holders were judged against).
+- **lastEventId**: the highest `id` among the events with `sessionId` = the session (the events
+  are in (`timeNs`, `id`) order, so it need not be the last one); null for a session known only
+  from a transcript.
 - **hidden**: meta `doneAtNs` set and neither transcript `lastUserNs > doneAtNs` nor a `start`
   event with detail `startup` or `resume` and `timeNs > doneAtNs`.
 
@@ -3575,6 +3669,8 @@ export function deriveSessions(input: DeriveInput): DerivedSession[];
 | 29 | P1: `start S1 T0`, `end S1 T0+10min−0.2s 'clear'`, `start S2 T0+10min 'clear'`; alive P1; `live(P1,S2,'idle',{statusUpdatedAtNs: T0, updatedAtNs: T0+5s})` | S2 `waiting`, since `T0+10min` (not `T0`) |
 | 30 | `start S1 T0`, `start S1 T0+60s 'compact'`; alive P1; `live(P1,S1,'busy',{statusUpdatedAtNs: T0+20s, updatedAtNs: T0+61s})` | `working`, since `T0+20s` (a compaction does not restart it) |
 | 31 | `observed(P1,S1,T0+300s)` only; alive P1; `live(P1,S1,'idle',{statusUpdatedAtNs: T0+20s})` | `waiting`, since `T0+20s` (reconcile does not restart it) |
+| 32 | P1: `start S1 T0+9s`, `end S1 T0 'exit'` (the later id has the earlier time); P2: `start S2 T0+20s` | S1 `lastEventId` = the id of the `end`; S2 = its own; a session known only from `tr(S1)` → `null` |
+| 33 | `start S1 T0`, with `bootId` `BOOT_A`, `BOOT_B` or `null`; also a session known only from `tr(S2)` with `null` | every session's `bootId` is the input's, `null` included |
 
 **Steps**
 - [ ] Write `test/sessions/derive.test.ts` with the 35 cases. `npm test` → fails.
@@ -4163,7 +4259,7 @@ results are checked in the store (`d.deck.store.meta`, `sessionPrs`, `prs`) or w
 **Depends on:** 2, 7, 11, 12 · **Wave:** 5 · **Design:** 7.6, 7.7, principles 5 and 7, 12 (resume: guard and lock) · **Contracts:** 2.8.6, 2.9.4 (`launching.ts`), 2.10.3, 2.10.4 · **Decisions:** D16, D24 (tab without adapter) (update design 7.6)
 
 **Files**
-- Create: `src/sessions/resume.ts`, `src/cli/launching.ts`
+- Create: `src/sessions/resume.ts`, `src/sessions/resume-by-id.ts`, `src/cli/launching.ts`
 - Modify: `src/sessions/refresh.ts` — call `sweepLocks(deck)` at the end of `refresh` (one line)
 - Modify (ruled in review): `src/store/types.ts` and `src/store/store.ts` (`KvKey` `resume_lock:<id>`, `kvEntries`), `src/terminals/{types,here,wezterm}.ts` (`timedOut` in `OpenResult`), with their tests
 - Create: `src/cli/commands/resume.ts`, `src/cli/commands/new.ts` (each `export const command: Command`)
@@ -4177,11 +4273,14 @@ results are checked in the store (`d.deck.store.meta`, `sessionPrs`, `prs`) or w
 export const LOCK_TTL_NS: Ns;                                                    // 60n * NS_PER_SECOND
 export function lockKey(sessionId: string): `resume_lock:${string}`;            // throws RangeError
 export function checkResumable(row: ListRow, files: Files): void;               // throws ResumeRefusedError
-export function acquireLock(deck: Deck, sessionId: string): void;                 // throws ResumeRefusedError
+export interface SawEvents { latestEventId: number | null }
+export function acquireLock(deck: Deck, sessionId: string, saw: SawEvents): void; // throws ResumeRefusedError
 export function sweepLocks(deck: Deck): number;
 export interface PreparedLaunch { sessionId: string; cwd: string; argv: string[]; flagsKnown: boolean; unknownFlags: string[]; kind: 'resume' | 'new' }
-export function prepareResume(deck: Deck, row: ListRow): PreparedLaunch;          // throws ResumeRefusedError
+export function prepareResume(deck: Deck, row: ListRow): PreparedLaunch;          // throws ResumeRefusedError; the row must come from rows loaded right after a refresh
 export function prepareNew(deck: Deck, options: { label: string | null; group: string | null; extra: readonly string[] }): PreparedLaunch;  // throws UsageError
+// src/sessions/resume-by-id.ts
+export function prepareResumeById(deck: Deck, sessionId: string): PreparedLaunch;  // throws RefError, ResumeRefusedError; the entry point of the command, the list and restore
 // src/cli/launching.ts
 export interface LaunchOutcome { code: number; lines: string[] }
 export function launchPrepared(deck: Deck, prepared: PreparedLaunch, where: 'here' | 'tab' | null): Promise<LaunchOutcome>;
@@ -4190,7 +4289,8 @@ export const command: Command;
 ```
 
 `--here` and `--tab` together → `UsageError`. The order inside `resume` is: `withDeck(ctx, { refresh: true }, …)`
-(ingest, reconcile, scan — design 7.6) → `loadRows` → `resolveRef` → `prepareResume` (guard, then
+(ingest, reconcile, scan — design 7.6) → `loadRows` → `resolveRef` (to a session id) →
+`prepareResumeById(deck, row.id)` (which refreshes and loads again, then `prepareResume`: guard, then
 lock, then command) → `launchPrepared`. `prepareNew` cleans the label and group with `cleanLabel`/`cleanGroup` (task 11).
 
 **Test cases** (`testDeck`, clock `T0`; `rowOf(id)` = the `loadRows` row)
@@ -4199,7 +4299,7 @@ lock, then command) → `launchPrepared`. `prepareNew` cleans the label and grou
 - `checkResumable`: a running row (P1 alive) → `ResumeRefusedError` (exit 4) `'0b5f3c1e is running (pid 4242)'`;
   two holders → `'(pid 4343, pid 4242)'`; no transcript → `'0b5f3c1e has no transcript'`; expired → `'0b5f3c1e has expired: its transcript is gone'`;
   dir `/gone` → `'0b5f3c1e: directory /gone no longer exists'`; a dead session with an existing dir → no throw.
-- `acquireLock(S1)` → kv `resume_lock:<S1>` = `` `${T0}` ``. Second call at `T0+10s` →
+- `acquireLock(S1, saw)` (`saw` = the store's latest event id of S1 at the time of the call, `null` when it has none; the examples that follow leave it out) → kv `resume_lock:<S1>` = `` `${T0}` ``. Second call at `T0+10s` →
   `ResumeRefusedError` `'0b5f3c1e is being resumed (10 s ago); try again in 50 s'`. At `T0+61s` → succeeds, content `T0+61s`.
 - Lock at `T0`, a start event for S1 at `T0` or later ingested, call at `T0+5s` → succeeds (replaced).
 - `sweepLocks` removes a lock older than 60 s and a lock followed by a start event; keeps a fresh one; returns the count.
@@ -4208,13 +4308,27 @@ lock, then command) → `launchPrepared`. `prepareNew` cleans the label and grou
   `{ sessionId: S1, cwd: <dir>, argv: buildResumeCommand(...).argv, flagsKnown: true, unknownFlags: [], kind: 'resume' }`, lock created; on a running row → refused, no lock.
 - `prepareResume` on a dead S1 with launch `['claude','--frob','x','--model','opus']` → `argv [...R,'--model','opus']`, `unknownFlags ['--frob']`.
 - Guard before lock: a running row with a stale lock → refused for running; the lock is unchanged.
+- `acquireLock(S1, { latestEventId })`: the id of S1's only event → lock taken; a second event of S1 (a start by another skydeck) → `ResumeRefusedError`
+  `"the session's state changed while preparing; run the command again"`, no lock written (a stale lock stays as it was); `null` with an event present → refused;
+  events of other sessions do not count; the argument is required (a test with `// @ts-expect-error` makes `npm run typecheck` fail when it becomes optional);
+  the latest event is read inside the one transaction, before the write.
+- `acquireLock`: a start event with `pid 0` and/or no `procStart` after a fresh lock does not release it (still "is being resumed"); `sweepLocks` keeps such a lock.
+- `prepareResume`: with a row whose `session.bootId` is null (also when `proc.bootId()` works now) → `ResumeRefusedError` `'cannot tell which sessions are running: the boot id could not be read'` before every other
+  refusal, no lock; a row whose `bootId` is set resumes whatever `proc.bootId()` says now; with a row whose `lastEventId` is behind the store's (a start event inserted after the row was read, also from inside `files.stat`, which
+  `checkResumable` calls between the read and the lock) → the "state changed" refusal and no lock — also when A took the lock, its start event was ingested and `sweepLocks`
+  removed the lock before B's call; a row that is up to date resumes. `prepareNew` with no boot id works.
+- `prepareResumeById(deck, S1)` (`test/sessions/resume-by-id.test.ts`): a dead S1 → the resume command and the lock; after rows were loaded, a start event of another process
+  (4343, alive) written to the spool → refused `'0b5f3c1e is running (pid 4343)'`, no lock; refusals of the guard (directory gone, boot id unreadable, a second resume within 60 s) pass through
+  with no lock; an unknown id, a prefix, a label and an upper-case id → `RefError`.
 - `acquireLock` and `sweepLocks` each read and write inside one transaction; several child processes taking one session's lock at once against one database file: exactly one succeeds, every round, with and without a stale lock and a sweep first.
 - `prepareNew({ label: ' x ', group: 'G', extra: ['--model','opus'] })` → `sessionId '00000000-0000-4000-8000-000000000001'`,
   `cwd` = `platform.cwd`, `argv ['claude','--session-id',<id>,'-n','x','--model','opus']`, `flagsKnown true`, `unknownFlags []`, `kind 'new'`, meta label `'x'` and group `'G'` stored;
-  label `'-x'` → `UsageError` and no meta stored; extra `-r <id>`, `-c`, `-cp`, `--session-id=<uuid>` → `UsageError` naming the flag, no meta stored; `--model x 'prompt'` passes.
+  label `'-x'` → `UsageError` and no meta stored; extra `-r <id>`, `-c`, `-cp`, `--session-id=<uuid>`, and every other flag with `picksSession` (alone, as `--flag=value`, in a cluster) → `UsageError` naming the flag, no meta stored; `-n x`, `--name=x`, `-nx` → `UsageError` that names `--label`; `--model x 'prompt'`, `--worktree`, `-w feat --model x 'prompt'`, `-pw --tmux` and every other removed flag that is not `picksSession` pass.
 
 `commands/resume.test.ts`, `commands/new.test.ts` (`d = testDeck(t, { env: (s) => ({ SKYDECK_HANDOFF: join(s.root, 'handoff') }) })`; `await main([...], d.ctx)`)
 - `resume --help`, `new --help` → 0 with the usage.
+- `resume 0b5f` where, between the command's first look and `prepareResumeById`'s own refresh (the second listing of the spool), another process (4343) writes a start event of S1 to the spool → 4, stderr `'skydeck: 0b5f3c1e is running (pid 4343)\n'`, no lock, no handoff file.
+- `resume 0b5f` (also `--tab`, `--here`) with `proc.setBootId(null)`, S1 recorded as running → 4, stderr `'skydeck: cannot tell which sessions are running: the boot id could not be read\n'`, no lock, no handoff file, no program run.
 - `resume 0b5f` (config default `here`) → 0, `<root>/handoff` = `handoffScript({ cwd: <dir>, argv })`.
 - Without `SKYDECK_HANDOFF` (`env: { SKYDECK_HANDOFF: undefined }`) → 1, stderr contains `not started through bin/skydeck` and `cd -- <dir> && claude --resume <S1>`.
 - `resume 0b5f --tab` with config `{"terminal":"wezterm"}` and gh-free `fakeRunner` answering code 0 → 0, one `wezterm cli --no-auto-start spawn` call
@@ -4228,7 +4342,8 @@ lock, then command) → `launchPrepared`. `prepareNew` cleans the label and grou
 - Never a permission flag: the handoff of a session launched without one contains no `--dangerously-skip-permissions` and no `--permission-mode`.
 - `new --label 'fix it' --group ABC-1 -- --model opus` → 0; handoff
   `cd -- <cwd> || exit 1\nexec claude --session-id <uuid1> -n 'fix it' --model opus\n`; `meta(<uuid1>)` label `'fix it'`, group `'ABC-1'`.
-- `new --label -x` → 2. `new -- -r <id>` → 2.
+- `new --label -x` → 2. `new -- -r <id>` → 2. `new -- -n x` → 2 and stderr names `--label`. `new -- --worktree` → 0 and the handoff is
+  `cd -- <cwd> || exit 1\nexec claude --session-id <uuid1> --worktree\n`; `new -- -w feat --model x 'fix the bug'` → 0, the flags reach the command.
 - After a failed open and after a WezTerm timeout the lock still holds (a second resume → 4); after a timeout no command is printed. `new --tab` timing out → `'skydeck: the new session\'s id is <uuid1>; running skydeck shows whether it started'`.
 
 **Steps**
@@ -4365,16 +4480,15 @@ export const command: Command;
   `endedAtNs >= <last event time of that boot> − 2 min` (D17). Order = order of `rows`.
 - **Run with tabs** (`terminal.opensTabs`): batches of `config.restoreBatch`. Before each batch:
   `memAvailableMb() < restoreMinFreeMb` (null counts as enough) → `stoppedForMemory`, the rest go
-  to `notStarted`, stop. Then `refresh(deck)` and `loadRows(deck)` once (design 7.6: the guard
-  works on fresh state), and for each entry of the batch: its fresh row (gone → `failed`
-  "no longer known") → `prepareResume` (refusal → `failed`), then `terminal.open` (error →
-  `failed`). Then, from the clock time taken before opening the batch,
+  to `notStarted`, stop. Then, for each entry of the batch: `prepareResumeById(deck, entry id)`
+  (it refreshes and loads the rows by itself, design 7.6; a `RefError` → `failed` "no longer
+  known"; a refusal → `failed`), then `terminal.open` (error → `failed`). Then, from the clock time taken before opening the batch,
   loop: `ingestSpool(deck)`; entries with `store.hasStartSince(id, batchStartNs)` → `started`;
   until all started or `restoreStartTimeoutSeconds` elapsed, `clock.sleep(1000)` between checks;
   the rest → `timedOut` (reported, skipped). `report` gets one line per outcome
   (`started <short> <title>`, `timed out <short> <title>`, `failed <short>: <reason>`).
-- **Run without tabs:** the first entry → `prepareResume` + `terminal.open` (here) → `handedOff`;
-  every other entry → `prepareResume` is NOT called (no lock); its command
+- **Run without tabs:** the first entry → `prepareResumeById` + `terminal.open` (here) → `handedOff`;
+  every other entry → `prepareResumeById` is NOT called (no lock); its command
   (`cd -- <shellQuote(dir)> && <shellJoin(buildResumeCommand …)>`) goes to `printed` and to `report`.
 - **Command.** Without `--yes`, stdin must be a terminal (else `UsageError`). The list shows per
   entry `<n>. [x| ] <shortId>  <title>  <how it ended>[  was working]` with how it ended =
@@ -4470,12 +4584,12 @@ the first frame (`\x1b[H\x1b[2J` + `render(...).join('\r\n')`), then start a bac
 (empty text clears) + `setLabel`/`setGroup`, `withMessage('saved')` or the error message;
 `note` → leave the alternate screen, `editNote(ctx, deck, id)` (task 15), re-enter;
 `done` → `markDone`/`markUndone`; `pr-add`/`pr-rm` → `attachManualPr`/`detachSessionPr`; any of
-these then `loadRows` + `withRows(reorder false)`. `resume` → `refresh(deck)` + `loadRows` (the
-guard works on fresh state, design 7.6) → `prepareResume` on the fresh row; with a tab adapter
+these then `loadRows` + `withRows(reorder false)`. `resume` → `prepareResumeById(deck, row.id)` (it
+refreshes and loads the rows by itself: the guard works on fresh state, design 7.6); with a tab adapter
 `launchPrepared(deck, p, 'tab')` and stay, message `opened <short> in a new tab` (or its returned
 lines, warnings included, when there are any); without one, leave the screen and
 `launchPrepared(deck, p, 'here')`, print its lines on stderr, then return its code. A
-`ResumeRefusedError` becomes the message. `refresh` → `refreshWithProgress(ctx, deck)`, then an explicit
+`ResumeRefusedError`, or a `RefError` (the session is gone), becomes the message. `refresh` → `refreshWithProgress(ctx, deck)`, then an explicit
 `refreshPrs` (`{ force: true, refreshMinutes }`, deps with `env`; design 7.3: the refresh key asks about every pull request that the sessions the list lists have attached
 and that is not merged or closed — `sessionIds`: the listed rows; a failure is saved on the pull request) + `loadRows` + `withRows(reorder true)`. `quit` or the end of `io.keys()` → write `\x1b[?25h\x1b[?1049l`,
 call `return()` on the key iterator, return 0. Errors from an effect never leave the terminal in

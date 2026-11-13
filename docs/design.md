@@ -483,16 +483,28 @@ set are not part of a launch command and are not restored.
 **The directory** is the session's project directory. If it no longer exists, resume is refused.
 A session without a transcript cannot be resumed.
 
-**The guard (principle 7).** Resume runs ingest and reconcile and refuses (exit 4) when the
-session is running, naming the holder. It then takes a lock for the session; if the lock exists
-and is younger than 60 seconds, resume is refused and says how long to wait.
-The lock is removed when a `start` event for the session appears or after 60 seconds. The lock
+**The guard (principle 7).** The guard owns its freshness: every resume (the command, the
+interactive list, restore) goes through one entry point that runs ingest, reconcile and the scan,
+loads the rows and finds the session in them, and only then decides. A start event that another
+skydeck's `claude` has written is a file in the spool until a refresh ingests it, so a row loaded
+earlier does not show it. The guard refuses (exit 4) when the rows were derived without a boot id,
+because every recorded process then looks dead and a running session cannot be seen ("cannot tell
+which sessions are running: the boot id could not be read"). The boot id is read once for a load
+and the rows carry it, so a failed read and a later successful one are never mixed; `new` resumes
+nothing and does not need it. It refuses when the session is running, naming the holder. It then takes a lock for the session; if the lock exists and is younger than 60 seconds,
+resume is refused and says how long to wait.
+The lock is removed when a `start` event of a real process for the session appears (a start
+without a pid or a process start time names no `claude` and releases nobody) or after 60 seconds. The lock
 is an entry `resume_lock:<session id>` in the database's `kv` table, holding the time it was
 taken in nanoseconds (so its age does not depend on any file's modification time). Reading the
 lock and writing it happen in one database transaction, which no two skydecks hold at once, so
-of several resumes started together exactly one gets the lock. A lock dated 60 seconds or more
-in the future, or holding something other than a time, counts as stale too; stale locks are
-deleted, again in one transaction, at the end of every refresh.
+of several resumes started together exactly one gets the lock. Inside that transaction the
+session's latest event is read again, and resume is refused ("the session's state changed while
+preparing; run the command again") when it is not the one its decision was made on: in between,
+another skydeck may have resumed the session, and a sweep may have removed its lock because its
+start event had been ingested. A lock dated 60 seconds or more in the future, or holding
+something other than a time, counts as stale too; stale locks are deleted, again in one
+transaction, at the end of every refresh.
 
 **Where.** `--here` replaces skydeck with `claude` in the current terminal: the command line tool
 hands the directory and the argument list back to the `bin/skydeck` launcher through a handoff
@@ -515,10 +527,20 @@ every word is quoted by the same function as the printed fallback.
 
 `skydeck new` generates a session id, stores the label and group for it, and starts
 `claude --session-id <uuid> [-n <label>] <flags after -->` in the current directory, with the
-same `--here` / `--tab` choice as resume. It refuses a flag after `--` that resume removes (7.6:
-the flags that choose the session, its name or where it runs, also inside a cluster of short
-flags such as `-cp`): `-r <id>` or `-c` would resume an existing session past the guard and the
-lock (principle 7). A prompt after `--` is passed on; it is the user's own and is never stored.
+same `--here` / `--tab` choice as resume. It refuses a flag after `--` that picks an existing
+session (also inside a cluster of short flags such as `-cp`, and before an unknown letter or an
+unknown long flag, as in `-cZ` or `-c-frob`): `-r <id>` or `-c` would resume an
+existing session past the guard and the lock (principle 7). These are `--resume`/`-r`,
+`--continue`/`-c`, `--session-id`, `--fork-session`, `--from-pr`, `--teleport`, `--rewind-files`,
+`--resume-session-at`, `--resume-drops-turn`, `--reply-on-resume`, `--attach-serve`,
+`--session-began-as-copy`, `--handle-uri`, and the deep-link and prefill flags. It refuses
+`--name`/`-n` too: the label is given with `--label`, and skydeck passes it as the name itself.
+The other flags that resume removes (7.6) only say where or how a new session starts and are
+passed on: `--worktree`/`-w`, `--tmux`, `--bg`, `--init`, `--init-only`, `--maintenance`,
+`--desktop`, and the cloud flags (`--cloud`/`--remote`, `--environment`/`--pool`, `--ref`,
+`--on-branch`, `--correlation-id`, `--forward-home-settings`); a resume drops them because a
+session that already exists must not start in a new worktree or in the cloud a second time. A
+prompt after `--` is passed on; it is the user's own and is never stored.
 When opening its tab times out, `new` prints no command but the new session's id, and says that
 running `skydeck` shows whether it started: a session that never started has nothing to resume.
 

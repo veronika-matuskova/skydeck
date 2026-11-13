@@ -61,6 +61,14 @@ export interface Store {
   processHasLaunch(bootId: string, pid: number, procStart: number | null): boolean;
   /** Whether a 'start' event for the session exists with time_ns >= sinceNs. */
   hasStartSince(sessionId: string, sinceNs: Ns): boolean;
+  /**
+   * Whether a 'start' event of a real process for the session exists with time_ns >= sinceNs: one
+   * with a pid (not 0) and a process start time. A start the hook wrote without them names no
+   * process that could hold the session, so it says nothing about a resume that is under way.
+   */
+  hasProcessStartSince(sessionId: string, sinceNs: Ns): boolean;
+  /** The highest id among the events that name the session (whatever their time or kind); null when there is none. */
+  latestEventIdOfSession(sessionId: string): number | null;
   /** All links ordered by time_ns. */
   links(): LinkRow[];
 
@@ -532,6 +540,23 @@ class SqliteStore implements Store {
         sinceNs,
       ) !== undefined
     );
+  }
+
+  hasProcessStartSince(sessionId: string, sinceNs: Ns): boolean {
+    return (
+      this.#get(
+        `SELECT 1 AS found FROM events
+         WHERE session_id = ? AND kind = 'start' AND time_ns >= ?
+           AND pid <> 0 AND proc_start IS NOT NULL LIMIT 1`,
+        sessionId,
+        sinceNs,
+      ) !== undefined
+    );
+  }
+
+  latestEventIdOfSession(sessionId: string): number | null {
+    const row = this.#get('SELECT MAX(id) AS id FROM events WHERE session_id = ?', sessionId);
+    return row === undefined ? null : optInt(row, 'id');
   }
 
   links(): LinkRow[] {
