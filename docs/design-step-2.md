@@ -518,8 +518,13 @@ hibernation (WSL issue #8696, section 21): then nothing in WSL answers and 6.3's
 
 ### 7.1 The keeper
 
-`bin/skydeck-keeper` is one python3 file, standard library only (`pty`, `os`, `select`,
-`socket`, `struct`, `json`, `fcntl`, `termios`, `signal`, `ctypes`, `time`), about 250 lines,
+`bin/skydeck-keeper` is one python3 file, standard library only (`pty`, `os`, `sys`, `select`,
+`socket`, `struct`, `json`, `fcntl`, `termios`, `signal`, `ctypes`, `resource`, `collections`,
+`time`; `sys` for the exception hook that keeps an error's message out of `keepers.log`, `ctypes`
+for `prctl`, `resource` for the program's core limit, `collections` for the tail), about 810 lines
+(about 700 without comments and blank lines; the first estimate counted the prototype's loop, and
+the rules below — claim, start deadline, pid line, queues and caps, linger — and the checks of every
+input it reads add the rest),
 for python3 3.9 or newer (the newest thing it uses, `os.waitstatus_to_exitcode`, came with 3.9;
 tested on 3.12 only, section 21). The server starts it as `python3 -I
 <runtimeDir>/keeper-<build>.py` — the code it read at its own start (16.5), and isolated mode, so
@@ -548,7 +553,9 @@ have resumed the session since, and starting it then could run one session twice
 
 The keeper:
 
-1. makes itself non-dumpable (2), creates its socket (mode 600; the directory is 700) and writes
+1. makes itself non-dumpable (2) before it reads the spec — when `prctl` fails it writes
+   `keeper -: dumpable` and goes on, dumpable, under the 1-byte soft core limit it inherits from
+   `serve` (ruled, plan task 9) — creates its socket (mode 600; the directory is 700) and writes
    its `<id>.pid` line (4.2) with `started` 0. It does **not** start the program. A connection alone never starts it either: only the start message `G` of a
    screen side does (8.1), and only while the clock (`time.time_ns()`) is before `startBy`. Then it
    forks the program with `pty.fork()` at the current size, sends `T` with the program's pid and
@@ -570,16 +577,26 @@ The keeper:
    passive until its first frame, which must be `C` (**claim**, 8.1): it makes the connection the
    screen side, replacing an earlier one (a restarted server must not wait for a half-dead
    connection to time out). It accepts only a peer with its own user id (`SO_PEERCRED`).
-4. reads the pty and keeps every chunk as a record in the tail; never interprets it.
+4. reads the pty and keeps every chunk as a record in the tail; never interprets it, but for one
+   rule: a record never ends inside a UTF-8 character. The first bytes (at most three) of a
+   character the program has not finished writing wait for the next read and go in front of it;
+   a resize record that comes meanwhile waits too, so it never stands between the two halves.
+   Bytes that cannot begin a valid character are never held, and held bytes are sent as they are
+   when the next read shows they do not go on as one, or when the program has ended: nothing is
+   dropped or reordered. A snapshot is text, so a record boundary inside a character could not be
+   reproduced by one (ruled, plan task 9).
 5. applies input and resizes from the screen side (8.1). The pty's master is non-blocking: input
    goes into a queue that is written whenever the pty can take it, while the keeper goes on reading
    the program's output, so a large paste into a busy program never stops the keeper. The queue
-   holds at most 4 MiB; while it is full the keeper stops reading from the server's connection, and
+   holds at most 4 MiB: an input frame that does not fit waits, unread, in the connection, and
+   while it waits the keeper stops reading from the server's connection (a frame larger than the
+   whole queue could never fit and closes the connection; the server sends at most 64 KiB), and
    the server, which then cannot write to the keeper, refuses further input for that terminal with
    `notice input-full` ("the program is not reading its input") rather than queue without end.
    Parks and resizes travel on the same connection and wait as well; the server makes no park
    while it cannot write to the keeper, so the tail may reach its cap and set gap (step 6, 7.3).
-6. keeps at most 8 MiB of tail. When the tail would grow beyond that (no server parked for a long
+6. keeps at most 8 MiB of tail, counting 64 bytes for each record besides its own, so that many tiny
+   records cannot outgrow it. When the tail would grow beyond that (no server parked for a long
    time while the program wrote a lot), it drops the oldest records and sets **gap**: the snapshot
    it holds no longer leads to the current screen (7.3).
 7. sends to the server without blocking: when more than 8 MiB is queued for a connection, it closes
@@ -811,9 +828,9 @@ keeper). Protocol version 1:
 | `G` start | server → keeper | Empty. Starts the program, only before `startBy` and only once (7.1, steps 1 and 2). |
 | `T` started | keeper → server | JSON `{ pid, procStart, atNs }`: the program was forked. Sent once, to the screen side, right after the fork and before the program's first output (when
 `exec` then fails, `X` with code 127 follows); a server that claims the keeper later finds the same in `hello`. It is what `open()` waits for (11.2) and what ties the terminal to the holder the program becomes (7.5). |
-| `N` do not start | server → keeper | UTF-8 reason. The program is never started (7.1, step 2). |
+| `N` do not start | server → keeper | UTF-8 reason, at most 1,024 bytes (a longer one closes the connection, as any frame the keeper cannot parse). The program is never started (7.1, step 2). |
 | `S` snapshot | keeper → server | 8-byte record number, 2-byte cols, 2-byte rows, the parked snapshot (UTF-8). Right after `H`, only when one is parked. |
-| `D` output | keeper → server | One record: bytes as read from the pty. After `H` (and `S`) come the tail's records, then live ones. |
+| `D` output | keeper → server | One record: bytes as read from the pty, except that a record never ends inside a UTF-8 character: the first bytes of a character the program has not finished writing go with the next record (7.1 step 4). After `H` (and `S`) come the tail's records, then live ones. |
 | `R` resize | keeper → server | One record: JSON `{cols, rows}`, the size the pty was set to. |
 | `X` exit | keeper → server | JSON `{code, signal, atNs, notStarted}`: after the last `D`. `notStarted` is null, or the reason the program was never started (the deadline passed, or `N`). |
 | `I` input | server → keeper | Bytes written to the pty. Dropped after the program has ended. |
@@ -2031,7 +2048,10 @@ Driven over its socket by `node:test` with real python3 (CI has it):
   not started, with `X` `notStarted`, and the program is never run (the stand-in records every
   start in a file the test reads); `hello` says `started` truly before and after;
 - the `.pid` line: written at start with `started` 0, rewritten with 1 at the start, removed at
-  the end; non-dumpable (`/proc/<pid>/status` shows `Dumpable: 0` where the test can read it);
+  the end; non-dumpable — the kernel then gives the process's `/proc/<pid>/` files to root, so
+  the check is that its `status` is owned by uid 0 and that the same user cannot open its
+  `environ` (`EACCES`), while its program's files are the user's again after `exec` (`status` has
+  no `Dumpable` line on this kernel, 6.18; checked by both plan reviews);
 - input: a paste of 8 MiB into a stand-in that does not read for a while neither stops the
   keeper's output nor loses bytes; the queue limit and the server's `input-full`;
 - output, input, resize as records in order; `R` echoed;
