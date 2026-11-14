@@ -1323,7 +1323,36 @@ export function cancels(e, zone, handled) {}
 // terminalKey `{ send: '\x16' }`; Ctrl+Shift+R and BrowserRefresh: windowChord and listKey
 // `reload`) is acted on once.
 
-// web/list.js — replaced by task 27
+// web/list.js — replaced by task 27. Task 27's list also writes the title bar's counts into
+// `#counts` of index.html (S2 12.1; the minimal list leaves it empty). app.js hands it `escape` (with `key`) while a filter is set, so that the
+// list clears its field with the filter; with no filter app.js goes back to the terminal itself.
+// app.js applies list keys only while the keyboard is on the list itself, not on a control of it
+// (a button, a link, a field: Enter presses a button; review 2 of task 26), or while nothing has
+// the keyboard. Accepted for task 26: switching to the terminal zone never focuses a card's
+// button (an Enter would press it: nothing resumes but on purpose) — it gives the keyboard to the
+// shown terminal, else to a card's first text field, else to the zone itself, and so does app.js
+// when what had the keyboard goes away (a dismissed notice, a closed form, a replaced card); a
+// refused `open-link` says its error in the key bar; Esc in the new form closes it — app.js takes
+// that Esc in the capture phase, so a list of the form's own cannot keep it (task 29).
+// A render never loses a click on a row (task 27): app.js renders when a list arrives and when
+// only the zone changed — at the focus a mousedown on a row moves, before its mouseup —, so the
+// list keeps a row's element across renders (the placeholder does) or selects on pointerdown.
+// At every render, and after each call it makes into a module, app.js gives the keyboard to the
+// zone when its holder is gone or no longer visible (its container hidden); so does a click that
+// selected nothing, once it is done (a notice's text, the key help, the header above a terminal).
+// But app.js never moves the keyboard BY ITSELF while text of the page that the user can see is
+// selected (a selection left in a card that is hidden now does not count): giving a text control
+// — xterm.js's helper textarea — the keyboard would take the selection away, and the Ctrl+C meant
+// to copy it would reach the program. While text is selected the keyboard may be on nothing
+// although the key bar names a zone; the next plain click, a zone chord, or the next render once
+// nothing is selected gives it back (no rule acts on the end of a selection: a mousedown's caret
+// would set it off before a drag selects). The user's own actions move it whatever is selected:
+// a zone chord, Esc closing the new form, and a terminal that the page's own resume or new
+// brings (S2 11.3 comes first); a terminal that only a list brought does not. A module that hides or removes its own keyboard holder in its OWN handler
+// (the find bar's Esc, a card's own button) is followed by no call of app.js: it moves the
+// keyboard itself to another element of its own — there is no hook for it. The page's chrome (the
+// title bar, the key bar, a notice's ×) takes no keyboard on a mouse click, so a click there
+// leaves it where the user was (ruled, review 2 of task 26, rounds three to six).
 /** @param {HTMLElement} root
  *  @param {{ select(id: string, how: 'click' | 'key'): void, activate(id: string): void,
  *           view(change: { filter?: string, unfolded?: string[], showDone?: boolean }): void }} hooks */
@@ -1338,6 +1367,18 @@ export function createTerminalView(root, deps) {}
 //     find(), copy(), pasteRaw(), focus(), setHidden(hidden), attached(): string[] }
 // The terminal view also shows, from `show(term)`: the `reconnecting` bar (S2 7.8) and "sized by
 // another window" (S2 8.2.6).
+// After a reconnect (S2 8.2.5) app.js itself sends `attach` for each id of `attached()`, the shown
+// terminal first and the next once the previous one's `snap` arrived, proposing the terminal's
+// size of the new `list`; an id the new `list` lacks is skipped, and a `list` without the terminal
+// the queue waits for moves it on; an id the view detached meanwhile (`attached()` lacks it, or
+// the view sent its `detach`) is skipped or moves the queue on in the same way. So the view drops
+// an id from `attached()` no later than it sends that id's `detach`, and sends all the detaches
+// of one occasion (the window hidden, a ninth terminal) in the same tick (task 28). The view then gets a second `snap` for a terminal it shows: it
+// resets that terminal, applies the snap, and sends its own `resize` when its fitted size differs;
+// `attached()` keeps its ids across the reconnect (ruled, task 26).
+// `deps.chord(e)` may be given keydown, keypress and keyup (xterm.js's custom key handler gets
+// all three): app.js acts on a window chord at its keydown only and answers true for each of its
+// events, so the view drops them all and nothing is done twice (review 2 of task 26).
 
 // web/cards.js — replaced by task 29
 /** @param {HTMLElement} root @param {{ act(action: object): Promise<ResultMessage>, select(id: string): void }} deps */
@@ -3701,7 +3742,10 @@ session into a terminal pane that says "terminal view comes with task 28".
   `String.prototype.isWellFormed` and `allowImportingTsExtensions` for its `.ts` import of
   `src/claude/session-id.ts`)
 - Modify: `package.json` (`"typecheck": "tsc --noEmit && tsc --noEmit -p web"`)
-- Test: `test-page/shell.test.ts`, `test-page/auth.test.ts`
+- Test: `test-page/shell.test.ts`, `test-page/auth.test.ts`, their helper `test-page/helpers/shell.ts`
+  (the recorder, stand-in servers), `test/web/pane.test.ts` (node:test on `web/pane.js`), and one
+  case in `test/window/server-failures.test.ts` (a launch hello closed 1013 uses up no token;
+  ruled for this task)
 
 **Behaviour.** `auth.js`: S2 8.2.2 steps 3–6 and "where the page keeps its key" — HMAC proofs,
 HKDF, `unwrapKey` into a non-extractable HMAC key, IndexedDB, the token used once. The page
@@ -3738,7 +3782,7 @@ with `@import` and `@typedef`, ruling 5).
   all against a stand-in server without one; a dropped file does not navigate the window; the
   server stopped → the bar of S2 6.3 within 4 s; started again (same boot) → "skydeck's server
   restarted; your sessions kept running" and the list back; a server started with another boot
-  id (`startTestServer(t, { bootId })`, A36) → "WSL restarted at <time>…" (S2 6.3); the keep-alive `failed`
+  id (`startTestServer(t, { bootId })`, A36) → "WSL has restarted since <time>…" (S2 6.3; ruled, the time the page lost the old server); the keep-alive `failed`
   in `welcome` and a `keepalive-lost` notice → "WSL is not kept running" in the title bar until
   `keepalive-back`; a `tick-failed` notice shown until the next `list`; a server with another asset version
   → the page reloads; the service-worker case of S2 17.4 (a stand-in server that registers a
