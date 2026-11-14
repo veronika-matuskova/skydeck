@@ -1,0 +1,53 @@
+skydeck window check kit - what each file is for, in the order docs/manual-checks.md uses them.
+docs/manual-checks.md is the procedure (W2, W14, W15); this is the short version.
+Run everything from WSL, in your checkout (cd ~/skydeck). The kit's files come from the checkout;
+the one file from outside, the Alpine tarball of step 2, is fetched in WSL with curl and checked
+against its sha256 before it is used. When Windows or PowerShell warns about, asks about or refuses
+a file of the kit, do not unblock it and change no setting: leave that optional step out.
+
+THE KEY LOG: the test page's server (serve.py) writes every key you press ON THE TEST PAGE into
+docs/check-kit/keylog.jsonl, also what you type into its text box. Never type a password or
+anything private there. The file is not committed (.gitignore) and skydeck never reads it.
+Delete it when the check is done:
+     rm docs/check-kit/keylog.jsonl
+
+0. Stand-in server for the key-test page (a WSL terminal of its own; leave it open). It never
+   starts claude and binds 127.0.0.1 only:
+     python3 docs/check-kit/serve.py          # listening on http://127.0.0.1:8765/
+   Ctrl+C stops it. It writes the key log above.
+
+1. Key test (W2).
+   a. A normal Edge tab: Ctrl+Shift+W and Alt+F4 close a WHOLE Edge window with all its tabs, so
+      open a new Edge window for the check (Ctrl+N in your Edge) and the page as its only tab:
+      http://127.0.0.1:8765/ (some chords close the tab or open a window: that is what is being
+      looked at).
+   b. An Edge app window with a profile folder of its own, the way skydeck starts its window:
+        sh docs/check-kit/edge-app.sh        # starts msedge.exe --app=... (a Windows program)
+      When several Windows users have an Edge folder, it asks for yours:
+        sh docs/check-kit/edge-app.sh http://127.0.0.1:8765/ <windows-user>
+      Its profile folder is %LOCALAPPDATA%\skydeck-check\edge-profile; Edge writes it, delete
+      it when you are done.
+   Press every chord on the page. Each one turns green when the page received it. Watch the
+   window: did it close, open a new window or tab, show a find bar, a print dialog, a devtools
+   pane, reload? "window loads this session" going up means a reload got through. Type
+   \ [ ] { } @ # ~ | and your accented letters in the text box (AltGr, dead keys).
+   What the page received (quoted, so that no byte of the log reaches your terminal raw):
+     jq -a 'select(.kind=="keydown").chord' docs/check-kit/keylog.jsonl | sort -u
+   The buttons Notification, Clipboard write, Clipboard read and Keyboard Lock say whether the
+   browser allows them on http://127.0.0.1 (the log line under the buttons).
+
+2. WSL lifetime, optional (W14, its second form; about 4 minutes; a throwaway distribution, your
+   own distribution and its sessions are not touched). On a managed company PC only with the
+   agreement of the PC's owner; no check requires it. Do not bypass or change PowerShell's
+   execution policy for it: when PowerShell refuses to run scripts, leave this step out.
+   docs/manual-checks.md, W14, gives the tarball's address and sha256, where to put it and the
+   command.
+
+3. Optional, 3 minutes (W15): leave the key-test page open, lock the PC (or let it sleep) for a
+   few minutes, come back. Did the page show "ping FAILED" and recover by itself, did "boot id"
+   change, did the keys still work, did the window repaint?
+
+Files: keytest.html and keytest.js (the page), serve.py (its server), edge-app.sh (the app
+window), lifetime/lifetime.ps1 (step 2). Left out of the repository on purpose: the research's
+recording of key presses, the Alpine tarball (step 2 says where it comes from) and the native
+Windows host (not part of step 2).
