@@ -3,9 +3,11 @@
 The short checklist to run by hand after installing skydeck on a machine, and before trusting a new
 Claude Code version. It covers what the tests cannot: they never start `claude`, never open a
 terminal tab, never restart WSL and never start a Windows program. Each item gives the command and
-the expected result. Items 1–9 check the commands of step 1; the checks W1–W26 check the window of
-step 2 (stage A) and start at "The window (step 2, stage A)" below; W27–W29 check editing in the
-window (stage D), at "The window (step 2, stage D)".
+the expected result. Items 1–9 check the commands of step 1; the checks W1–W26 but W11, W16,
+W19 and W21 check the window of step 2 (stage A) and start at "The window (step 2, stage A)"
+below; W27–W29 check editing in the window (stage D), at "The window (step 2, stage D)"; W11, W19
+and W21 check which sessions need you and the desktop notifications (stage B), at "The window
+(step 2, stage B)".
 
 Setup:
 
@@ -265,8 +267,9 @@ pull requests again. Press `q` to leave.
 
 The checks of the design's section 18 (design-step-2.md) that stage A needs: W1–W10, W12–W15,
 W17, W18, W20 and W22–W26, and one more that came with the page's ping rule ("Minimised for half
-an hour", after W15). W11, W16, W19 and W21 come with the stages that build what they check. Each
-check says what to set up, what to type, what to look at and what to write down.
+an hour", after W15). W11, W19 and W21 are stage B's (at the end), and W16 comes with the stage
+that builds what it checks. Each check says what to set up, what to type, what to look at and what
+to write down.
 
 Setup:
 
@@ -344,7 +347,8 @@ devtools pane, history, reload). What the ones with something to see do:
 | Ctrl+Shift+C | with text selected in the terminal: copies it (paste it into Notepad) |
 | Ctrl+Shift+V | Claude Code's image paste (W6) |
 | Ctrl+Shift+H | the key help; again: it goes |
-| Ctrl+Shift+P, Ctrl+Shift+J | the key bar says `Ctrl+Shift+P: comes in a later stage` (`…J…`) |
+| Ctrl+Shift+P | the key bar says `Ctrl+Shift+P: comes in a later stage` |
+| Ctrl+Shift+J | look at the title bar first: while it shows a count (`1 needs you`, …), leave this key out here (W21 checks it), since it would select a session that needs you, maybe a real one, and 1.5 seconds later clear that session's mark. With no count: the key bar says `no session needs you` |
 | in the list (Ctrl+Shift+L first), with the throwaway session selected (its short id in the header): `l`, F2, `g`, `n`, `p` | its dialog opens over the page (`Label — <title>`, …); Esc closes it and saves nothing. Do not press `d` here: it marks the session done, and W29 checks it |
 | in the list: F5, Ctrl+R, Ctrl+F5, Shift+F5, Ctrl+Shift+R | the page reloads itself (the terminals come back) after it has checked the server |
 | in the terminal: F5, Ctrl+R | they reach Claude Code; Ctrl+Shift+R reloads the page |
@@ -393,12 +397,19 @@ Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PgDn and Ctrl+PgUp).
 ## W3. One window, its own taskbar button
 
 With the window open: it has a taskbar button of its own, apart from your own Edge's (the icon is
-Edge's until a later stage gives the page its own; the title is `skydeck`). `skydeck window` again
-opens no second window (`a window is already open`). `skydeck window --restart`: the same window
-stays, with the same button, and says `skydeck's server restarted; your sessions kept running`.
+Edge's until a later stage gives the page its own; the title is `skydeck` while no session needs
+you, below). `skydeck window` again opens no second window (`a window is already open`).
+`skydeck window --restart`: the same window stays, with the same button, and says `skydeck's
+server restarted; your sessions kept running`.
 When a check makes WSL restart (W14's third part), look at the button again after `skydeck window`.
 
-Write down: whether the window and your Edge share a button, and whether the button changed.
+The button's title is the window's: while a session needs you it is `(1) skydeck` (`(3) skydeck`
+for three), and `skydeck` again once none does. Look at it, with the pointer over the button,
+while a session needs you (the title bar's count shows it; W21's step 1 makes one), and again once
+none does (after W21's step 2).
+
+Write down: whether the window and your Edge share a button, whether the button changed, and
+whether its title showed the count.
 
 ## W4. Claude Code in a window terminal (real claude)
 
@@ -1022,3 +1033,205 @@ instead of opening its dialog; type nothing then, and press the key again.
 
 Write down, per layout: every key that did something else than described here, or nothing; in
 step 4, whether a reload key reloaded the window with changed text, and which.
+
+## The window (step 2, stage B)
+
+The checks of the design's section 18 (design-step-2.md) that stage B needs: W11, W19 and W21,
+which sessions need you and the desktop notifications ([install.md](install.md), "Which sessions
+need you (stage B)"), and W3's title (above). Each check says what to set up, what to type, what to
+look at and what to write down.
+
+Setup:
+
+- The setup of "The window (step 2, stage A)" above, with its **throwaway session in the window**.
+  Every prompt here goes to that session or to the other throwaway session below, never to one of
+  your real work. **Before every key you type into the window**, look at the header's short id
+  (on its second line, after the directory, the times and where the title comes from): it must be
+  that of one of the two throwaway sessions, the one the step names. No step presses Enter on a
+  row whose short id you have not looked at.
+- **A prompt is typed only into a terminal that has the keyboard**: the key bar says `Focus:
+  terminal` (else Ctrl+Shift+L until it does), and the header's short id is the throwaway session's.
+  When that session's terminal has ended (its last screen is dimmed under a bar with Resume and
+  Close), click `Resume` on the bar first and wait until it runs; when it has no terminal in the
+  window at all (after a restart of the PC or of WSL), its resume card shows instead: click `Resume
+  here` on the card and wait until it runs. Type nothing otherwise: text typed while the list has
+  the keyboard is list keys — `k` moves to the row above, which may be a real session, `n` opens its
+  note, `l` its label, `d` marks it done.
+- **The other throwaway session**, in a terminal of your own: open one more WSL terminal, **T**, and
+  in it `cd ~/skydeck-try && claude`; send it one prompt (`say hello in one word`). In the window
+  its row is under Open and says `running in another terminal`; once its answer is written, its
+  second line is `finished · not seen · <age>` instead: click the row, and the mark goes after 1.5
+  seconds or a little more (its card shows). A turn this short can also be over between two of the
+  server's looks and leave no mark: then there is nothing to clear. When a step says "click the
+  other session's row", click that row: the window shows its card, and nothing you type in the
+  window reaches it. **When you are done with the checks of this part**, end it: `/exit` in T.
+- **The story prompt** is `write a story of about 300 words about a lighthouse; reply in this
+  chat, with no tool and no file`: Claude Code writes for a while. When it asks for anything all
+  the same (to run a command, to write a file), answer **No** and send the prompt again.
+- A permission prompt is made with a command that asks and does no harm if it were allowed
+  (`touch skydeck-check.txt` in the throwaway folder), answered **No**; a question by asking
+  Claude Code for one, answered.
+- No step changes Edge's or Windows' settings. Allowing notifications (W11, step 1) is the one
+  permission asked, and `Block` is as good an answer to write down as `Allow`. Windows' Do not
+  disturb holds notifications back: before W11, look whether it is on (the bell at the right end
+  of the taskbar, or Win+N) and write it down; change nothing.
+- **Your real sessions keep running** and can need you meanwhile: a notification can be one of
+  theirs. Click only a notification titled with a throwaway session's title: a click selects its
+  session, and 1.5 seconds later that session's mark is cleared. Likewise Ctrl+Shift+J is pressed
+  only where a step says so, once it has said how to see that the session it goes to is the
+  throwaway one.
+- The checks run in any order; each clears the marks it made. W3's title is looked at while a
+  session needs you, which W21's step 1 makes.
+- What to look at: a row's left bar and second line, the title bar's count at its left
+  (`1 needs you`; higher when other sessions need you too), the key bar, and the notifications.
+
+## W11. Desktop notifications (real claude)
+
+Setup: look at the right of the title bar.
+
+- `Turn on notifications` is there: Edge has not been asked yet. Start at step 1.
+- It is not there: Edge has an answer from before. When you allowed notifications then, start at
+  step 2 and leave out steps 1 and 5. When you blocked them, when Edge or the company's policy
+  refused, or when you do not know, do step 5 first: it shows Edge's answer. With the answer
+  `Allow` there, go on with steps 2 to 4 and 6; otherwise W11 ends after step 5.
+
+1. **The prompt.** Click `Turn on notifications`. Expected: Edge's own prompt, asking whether the
+   page at `127.0.0.1:47613` (or your `window.port`) may show notifications. Choose `Allow` or
+   `Block`; both are valid answers. Expected either way: the button goes. When no prompt comes and
+   the button goes at once, Edge or the company's policy refused: write that down. When you close
+   the prompt without choosing, the button stays: click it again. When no prompt comes and the
+   button stays (Edge may ask quietly, with a small icon where an address bar would be, and the
+   window has none): write that down, change nothing, and leave W11 there. After `Block` or a
+   refusal, do only step 5 of W11: steps 2 to 4 and 6 need notifications, and the title bar's count
+   and the window's title (W21, W3) are what shows you that a session needs you.
+2. **A notification, and a click on it.** Select the throwaway session; its terminal has the
+   keyboard (the key bar says `Focus: terminal`). Type the story prompt and press Enter. At once
+   click the other session's row (its card shows), then click into W, so that no skydeck window has
+   the focus; leave the skydeck window where you can see it. Expected: while the story is written,
+   the throwaway session's second line starts with `working`; once it is done, the line is `finished
+   · not seen · <age>`, and a desktop notification comes, titled with the throwaway session's title,
+   its text `finished`. Click the notification. Expected: the skydeck window comes to the front with
+   the throwaway session selected (its terminal shows; the header's short id is its), and its mark
+   goes after 1.5 seconds or a little more.
+3. **A notification the page closes.** Do step 2 again up to the notification, but do not click
+   it: let it go from the screen (Windows keeps it in its notification centre: Win+N shows it).
+   Click the throwaway session's row in the skydeck window and wait until its mark goes. Then open
+   the notification centre (Win+N). Expected, from skydeck's side: the page has closed that
+   notification. Whether Windows still lists it is what this step finds out.
+4. **The PC locked while the window is in front.** The commonest way of being away: the session you
+   work in is selected, its window in front, and you lock the PC. Select the throwaway session (the
+   key bar says `Focus: terminal`), type the story prompt and press Enter, and keep the skydeck
+   window in front with that session selected (click nothing else). Lock the PC at once (Win+L) and
+   wait two minutes; when Windows shows a notification on the lock screen, write it down. Unlock,
+   and the moment the desktop is back, before you click anything, look at the throwaway session's
+   row, the title bar's count and the taskbar button's title; then open the notification centre
+   (Win+N). Expected, one of two:
+   - Edge still said that the window had the focus while the PC was locked: the session was seen
+     at its turn end, so no `finished · not seen`, no count and no notification. Then a turn that
+     ends in the session you work in while you are away gives no mark and no notification.
+   - Locking took the focus from the window: a notification `finished` came (on the lock screen,
+     or in the notification centre), and the row says `finished · not seen` — but only for a
+     moment: once the window has the focus again, its selected session is seen after 1.5 seconds
+     or a little more, the mark goes, and the page closes the notification. Looked at too late,
+     this case looks like the first one.
+
+   Write down exactly what you saw, and when. When the mark is still there, click the throwaway
+   session's row and wait until it goes.
+5. **Where Edge keeps the answer.** Ctrl+Shift+L until the key bar says `Focus: list`, then F5:
+   the page reloads, and `Turn on notifications` does not come back. Edge keeps your answer in the
+   window's own profile, among its site permissions for notifications. To look at it (only to look:
+   change nothing there), open a normal Edge window on the window's profile folder (the one
+   `skydeck doctor` names), as in W13, in P:
+
+   ```powershell
+   & "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --user-data-dir="C:\Users\<you>\AppData\Local\skydeck\edge-profile"
+   ```
+
+   and in that window's address bar `edge://settings/content/notifications` (when Edge shows
+   another page, type `notifications` into the search field of its settings). Expected:
+   `http://127.0.0.1:47613` (with your `window.port` if you changed it) under the allowed or the
+   blocked sites, as you answered. Close that Edge window; the skydeck window stays.
+6. **Minimised for half an hour.** The other session in T is idle, and its row has no mark.
+   Minimise the skydeck window, and touch neither it nor T for 30 minutes (the stage A check
+   "Minimised for half an hour" can be run at the same time). Then, in T, send the story prompt to
+   that session. Expected: once the story is written, a notification titled with that session's
+   title, its text `finished`, without your touching the window. Click it. Expected: the window
+   comes back with that session selected (the card of a session that runs in another terminal),
+   and after 1.5 seconds or a little more its mark goes. When the window stays minimised, write
+   that down, bring it back yourself, and click that session's row until its mark goes.
+
+Write down: whether Do not disturb was on; the prompt's text and your answer; for each
+notification, whether it came, how long after the turn's end, and what it showed (its title, its
+text, and the name Windows put on it); whether a click selected the session; whether Windows still
+listed the notification the page closed (step 3); what you saw after the lock (step 4); what
+Edge's settings list for skydeck's address (step 5); whether the notification came after half an
+hour, and whether its click brought the minimised window back (step 6).
+
+## W19. What a session that asks shows (real claude)
+
+In the window, select the throwaway session (look at the short id); its terminal has the
+keyboard (the key bar says `Focus: terminal`; else Ctrl+Shift+L).
+
+1. Type `please run: touch skydeck-check.txt` and press Enter. Expected: Claude Code shows its
+   permission prompt for the command; meanwhile the throwaway session's row has a bar at its left
+   in the waiting colour, and its second line is `needs you · <detail> · <age>` (`needs you ·
+   <age>` without a detail), also while it is the selected one; the title bar's count went up by
+   one. Write the line down as far as it shows (a long one ends with `…` where the row ends).
+   Answer **No** (the prompt's `No`, or Esc). Expected: the line goes once the prompt is closed.
+   When nothing asks, your permission mode allows the command: Claude Code makes the empty file
+   `skydeck-check.txt` in the throwaway folder, which does no harm. Write down that it did not
+   ask, remove the file in W (`rm ~/skydeck-try/skydeck-check.txt`), and in step 3 use the
+   question of step 2.
+2. Type `ask me with your question tool whether I prefer tea or coffee, then stop` and press
+   Enter. Expected: Claude Code asks its question, and the row's second line is
+   `needs you · <detail> · <age>` as in step 1. Write the line down; answer the question.
+3. What a notification shows (only with notifications allowed, W11): do step 1 again, and right
+   after Enter click into W, so that no skydeck window has the focus. Expected: a notification
+   titled with the throwaway session's title, its text `asks: <detail>` (`asks` without a
+   detail). Click it, and in the session answer the permission prompt **No** (or the question).
+
+Write down: the two lines and the notification's text, exactly; whether the detail tells a
+permission prompt from a question; whether a detail held a command (`touch skydeck-check.txt`) or a
+path — what a notification shows to anyone who can see your screen.
+
+## W21. A finished turn, and seen (real claude)
+
+1. **Finished, not seen.** Select the throwaway session (the key bar says `Focus: terminal`), type
+   the story prompt, press Enter, and at once click the other session's row. Stay in the skydeck
+   window. Expected: once the story is written, the throwaway session's row has a green bar at its
+   left and a bold title, and its second line is `finished · not seen · <age>`, in green; the title
+   bar's count went up by one (`1 needs you`, after a dot, when no other session needs you); no
+   notification comes, since the window has the focus. Look at the taskbar button's title now (W3).
+2. **Seen.** Look first: only when the title bar's count says `1 needs you` and the throwaway
+   session's row is the one with the green bar, press Ctrl+Shift+J. Expected: the throwaway session
+   is selected (look at the header's short id) and its terminal takes the keyboard; after 1.5
+   seconds or a little more its mark goes, and the count with it. Look again before the next press:
+   with no count left in the title bar, press Ctrl+Shift+J once more, and the key bar says `no
+   session needs you`. When the count is higher, or another row has a bar, other sessions need you
+   too, and Ctrl+Shift+J would go to them first (those that ask, then those that ended, then the
+   older finished ones) and clear a real session's mark: click the throwaway session's row instead,
+   and leave out both presses.
+3. **A turn that ends in front of you.** With the throwaway session selected, the window in front
+   and the key bar saying `Focus: terminal`, type the story prompt, press Enter, and keep it
+   selected, the window in front, until the story is written. Expected: no mark, and the count does
+   not change.
+4. **An ask** is W19's step 1: `needs you · …` while the prompt is open, also on the selected
+   session, gone once it is answered.
+5. **Several tool calls.** Select the throwaway session (the key bar says `Focus: terminal`), type
+   `list the files here, then count them` and press Enter; at once click the other session's row,
+   then click into W, so that no skydeck window has the focus. Watch the throwaway session's row
+   until the turn is over: its second line starts with `working` while Claude Code works. When
+   Claude Code asks to run a command, the row says `needs you · …` (with notifications allowed, a
+   notification `asks: …` comes too): click the row and read the command it proposes. Answer the
+   plain `Yes` (not the one that stops asking) only when the command only lists or counts the files
+   of the throwaway folder (`ls`, `find`, `wc` on `~/skydeck-try` or `.`); otherwise answer **No**,
+   write the command down, and type the prompt again. After a `Yes`, click the other session's row
+   and W again. Expected: `finished · not seen`, and its notification when they are allowed, only
+   once Claude Code has written its answer, not between two of its steps. Then click the throwaway
+   session's row and wait until its mark goes (1.5 seconds or a little more): the count goes down
+   with it, and the taskbar button's title is `skydeck` again when no other session needs you.
+
+Write down: what each step showed; in step 5, the commands Claude Code proposed, whether
+`finished` or a `finished` notification came before the answer was written, and how many
+notifications came. Yours to judge: the list and the title bar's counts call an idle session
+`waiting` (stage A's word); whether they should say `idle`.
