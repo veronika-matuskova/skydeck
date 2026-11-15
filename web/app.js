@@ -123,7 +123,13 @@ const state = {
   zone: 'terminal',
   /** Session ids, the most recently selected first (Ctrl+Tab, Ctrl+Shift+O). @type {string[]} */
   mru: [],
-  view: { filter: '', unfolded: /** @type {string[]} */ ([]), showDone: false },
+  view: {
+    filter: '',
+    unfolded: /** @type {string[]} */ ([]),
+    showDone: false,
+    chips: /** @type {import('../src/window/protocol.ts').SearchChip[]} */ ([]),
+    opened: /** @type {string[]} */ ([]),
+  },
   newOpen: false,
   /** @type {Map<string, ExitMessage>} */
   exits: new Map(),
@@ -525,7 +531,7 @@ function cutTo(text, bytes) {
  * A change of the page's view (S2 8.2.3 `view`). The filter is held to S2 8.2.3's limit, so that
  * the server never refuses the page's view (it would close the connection for it): a longer one
  * is cut to its first 1,024 bytes, and the key bar says so.
- * @param {{ filter?: string, unfolded?: string[], showDone?: boolean }} change
+ * @param {{ filter?: string, unfolded?: string[], showDone?: boolean, chips?: import('../src/window/protocol.ts').SearchChip[], opened?: string[] }} change
  */
 function changeView(change) {
   let next = change;
