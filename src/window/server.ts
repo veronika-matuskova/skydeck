@@ -529,7 +529,12 @@ export async function runServer(options: ServerOptions): Promise<RunningServer> 
         nowNs: clock.nowNs(),
         attention: attending.attention.facts(),
       });
-      tick?.listed(message.sections.flatMap((section) => section.rows.map((r) => r.id)));
+      // The sections' rows, and a hidden selection whose header the page shows (E13: it has a
+      // terminal of the window), whose pull requests that header shows too (review 2, ruled).
+      tick?.listed([
+        ...message.sections.flatMap((section) => section.rows.map((r) => r.id)),
+        ...(message.selectedRow?.terminal == null ? [] : [message.selectedRow.id]),
+      ]);
       return {
         ...message,
         terminals: message.terminals.map((term) => ({ ...term, ownsSize: false })),
