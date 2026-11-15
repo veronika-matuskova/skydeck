@@ -8,7 +8,8 @@ W19 and W21 check the window of step 2 (stage A) and start at "The window (step 
 below; W27–W29 check editing in the window (stage D), at "The window (step 2, stage D)"; W11, W19
 and W21 check which sessions need you and the desktop notifications (stage B), at "The window
 (step 2, stage B)"; W16 checks restore in the window after WSL stopped (stage C), at
-"The window (step 2, stage C)".
+"The window (step 2, stage C)"; W30, W31 and W3's icon check search, the quick switcher and the
+page's icon (stage E), at "The window (step 2, stage E)".
 
 Setup:
 
@@ -272,8 +273,9 @@ pull requests again. Press `q` to leave.
 
 The checks of the design's section 18 (design-step-2.md) that stage A needs: W1–W10, W12–W15,
 W17, W18, W20 and W22–W26, and one more that came with the page's ping rule ("Minimised for half
-an hour", after W15). W11, W19 and W21 are stage B's and W16 is stage C's, each in its stage's part
-at the end. Each check says what to set up, what to type, what to look at and what to write down.
+an hour", after W15). W11, W19 and W21 are stage B's, W16 is stage C's, and W30 and W31 are stage
+E's, each in its stage's part at the end. Each check says what to set up, what to type, what to
+look at and what to write down.
 
 Setup:
 
@@ -336,7 +338,7 @@ took until the page showed, and anything Windows showed meanwhile (W20).
 ## W2. The keys reach the page
 
 **In the window.** The page owns every key of the design's table from stage A on, also those whose
-action comes later. Setup: the window open with the throwaway session in slot 1 (its number shows
+action came with a later stage. Setup: the window open with the throwaway session in slot 1 (its number shows
 at the left of its row in Open). Press every key the key help lists (Ctrl+Shift+H): the page must do
 what the help says, and Edge nothing of its own (no new window or tab, find bar, print dialog,
 devtools pane, history, reload). What the ones with something to see do:
@@ -351,7 +353,7 @@ devtools pane, history, reload). What the ones with something to see do:
 | Ctrl+Shift+C | with text selected in the terminal: copies it (paste it into Notepad) |
 | Ctrl+Shift+V | Claude Code's image paste (W6) |
 | Ctrl+Shift+H | the key help; again: it goes |
-| Ctrl+Shift+P | the key bar says `Ctrl+Shift+P: comes in a later stage` |
+| Ctrl+Shift+P | the quick switcher opens over the window, the caret in its field; press Esc and nothing else: it closes (Enter there would switch to the highlighted session, or resume it). W30 checks it |
 | Ctrl+Shift+J | look at the title bar first: while it shows a count (`1 needs you`, …), leave this key out here (W21 checks it), since it would select a session that needs you, maybe a real one, and 1.5 seconds later clear that session's mark. With no count: the key bar says `no session needs you` |
 | in the list (Ctrl+Shift+L first), with the throwaway session selected (its short id in the header): `l`, F2, `g`, `n`, `p` | its dialog opens over the page (`Label — <title>`, …); Esc closes it and saves nothing. Do not press `d` here: it marks the session done, and W29 checks it |
 | in the list: F5, Ctrl+R, Ctrl+F5, Shift+F5, Ctrl+Shift+R | the page reloads itself (the terminals come back) after it has checked the server |
@@ -400,8 +402,8 @@ Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PgDn and Ctrl+PgUp).
 
 ## W3. One window, its own taskbar button
 
-With the window open: it has a taskbar button of its own, apart from your own Edge's (the icon is
-Edge's until a later stage gives the page its own; the title is `skydeck` while no session needs
+With the window open: it has a taskbar button of its own, apart from your own Edge's (its icon is
+"W3, the icon", in the part of stage E at the end; the title is `skydeck` while no session needs
 you, below). `skydeck window` again opens no second window (`a window is already open`).
 `skydeck window --restart`: the same window stays, with the same button, and says `skydeck's
 server restarted; your sessions kept running`.
@@ -1420,3 +1422,174 @@ and restore them or not, as you like.
    write down what is in it (`ls -A <folder>`).
 4. Start again what you stopped in "Prepare". Your own sessions are listed by `skydeck` and in the
    window, and resume as always.
+
+## The window (step 2, stage E)
+
+The checks of the design's section 18 (design-step-2.md) that stage E needs: W30 and W31, search,
+the chips, stacks and the quick switcher ([install.md](install.md), "Search, the chips and stacks
+(stage E)" and "The quick switcher (stage E)"), and the icon's part of W3. Each check says what to
+set up, what to type, what to look at and what to write down.
+
+Setup:
+
+- The setup of "The window (step 2, stage A)" above, with its **throwaway session in the
+  window**. These checks look at your real sessions and change none of them: only the throwaway
+  session is ever resumed, or typed into.
+- **Its short id.** Click the throwaway session's row once, then look at the header's second
+  line: it must start with the throwaway folder, `/home/<you>/skydeck-try`. When it shows another
+  folder, you clicked another session: find the throwaway session's row first (under Open by its
+  slot number; or in W, where `skydeck show <short id>` prints the folder on its `dir:` line for
+  a short id of `skydeck ls`'s last column), click it once and look again; never click a row
+  marked as needing you (a coloured bar at its left) to look. Then write down the
+  short id the header shows (on that second line, after the directory, the times and where the
+  title comes from). Each check starts with the throwaway session selected, so that a key that
+  lands where you did not mean it to reaches only the throwaway session.
+- **Where the keyboard is, before you type.** Text belongs in a field only while that field has
+  the keyboard: the filter's field when its border has the selection's colour and its caret
+  blinks in it (click into it first), the switcher's field while the switcher's panel is shown
+  over the window. Type nothing otherwise: text typed while the list has the keyboard is list
+  keys — `k` moves to the row above, which may be a real session, `n` opens its note, `l` its
+  label, `d` marks it done —, and text typed while a terminal has it reaches that session's
+  program. When the field shows no caret, click into it first. In the filter's field press no
+  Enter: Enter gives the keyboard to the list, where the next letter is a list key. No step
+  presses Enter in the switcher on a session whose short id you have not looked at.
+- **One click on a row, on its title.** A double click on a session that is not running resumes
+  it. These checks click only rows inside a stack, which never need you (a session that needs
+  you and stays selected for 1.5 seconds is marked seen), and the throwaway session's row. A
+  session's resume card shows `Resume here`: never click it in these checks.
+- **Leave the window as you found it.** Write down at the start what the filter holds, which
+  chips are on (`Show done` among them), which stacks are open, whether Earlier is unfolded, and
+  your keyboard layout. Each check starts from an empty filter (Esc in its field) and no chip on
+  (a click on each chip that is on). At the end put back what you wrote down: the filter's text
+  typed again into its field (look for the caret first), each chip that was on clicked on again,
+  the stacks you opened closed and those that were open opened again, Earlier folded or unfolded
+  as it was, and your own layout (Win+Space). Fold Earlier only while the selected session is not
+  in Earlier (a fold with the selection inside it selects the row above it, which may be a real
+  session); when the throwaway session's row is in Earlier, leave Earlier unfolded and write that
+  down.
+
+## W30. Search on your own sessions (real claude)
+
+Setup: the throwaway session selected (look at the short id in its header), the filter empty, no
+chip on. Write down how many sessions the title bar counts.
+
+1. **Two words.** Take one of your ticket keys and a word of that session's title (`ORB-2107` and
+   `login` below). Click into the filter's field: its caret blinks. Type `orb-2107 login`, in lower
+   case. Expected: the list follows each keystroke; at the end it lists only the sessions that
+   have both words (in their title, group, note, directory or a pull request), done ones too with
+   their `done` mark; every section is unfolded, no stack is drawn, and the footer of done
+   sessions is gone. The title bar's counts did not change. Then Ctrl+A (in the field: it selects
+   the field's text) and type `login orb-2107`: the same sessions. Press Esc: the field is empty,
+   the list as before, and the key bar says `Focus: list`.
+2. **A short id.** Click into the field again (look for the caret) and type the first 6 characters
+   of the throwaway session's short id. Expected: the throwaway session is listed (and any session
+   whose title, group, note, directory or pull request holds those characters, which is rare).
+   Backspace twice (4 characters left): still listed. Backspace once more (3 characters): the id
+   no longer counts, only the fields do; mostly `No session matches the filter.` Press Esc.
+3. **The chips.** Look at the key bar's `Focus: …` and keep it in mind. Click `Running`. Expected:
+   the chip is drawn pressed, only the sessions under Open are listed, and `Focus: …` did not
+   change. Click it again: it is off, the list as before. The same with `Open PR` (only the
+   sessions with a pull request that is not merged or closed) and `Has note` (only those with a
+   note). Then `Running` and `Has note` together: only the running sessions that have a note
+   (`No session matches the filter.` when none has one); click both off. Then `Show done`: the
+   done sessions show with their `done` mark and the footer says `done sessions shown · hide`;
+   click it again, and the footer is `<n> done hidden · show` again (or gone when none is done).
+4. **A stack.** Look in This week, and in Earlier, for a line `+<n> more in <group>`. When
+   Earlier is folded (none of its rows shows), a click on its header unfolds it; when its rows
+   show, do not click its header (that click folds it). When there is none, write that down and go on with step 5. Click that
+   stack's head once, on its title (the row just above the line). Expected: the head is selected,
+   its resume card shows, the key bar says `Focus: list`. That is a real session: from here to
+   the end of this step press only ← and →, never Enter (Enter would resume it). Press →: the
+   stack opens, its other sessions follow the head, indented, and the `+… more` line is gone.
+   Press ←: it closes again. Press →, click the first indented session once, then press ←.
+   Expected: the head is selected again and the stack is closed. Then click the `×<n>` after the
+   head's key: the stack opens; wait a moment (two quick clicks are a double click, which acts
+   once) and click it again: it closes; neither click moved the selection or the keyboard. Then
+   click the throwaway session's row once (look at the short id): the next steps start from it.
+   When you unfolded Earlier in this step and the throwaway session's row is not in Earlier, fold
+   Earlier again now, with a click on its header. When its row is in Earlier, leave Earlier
+   unfolded until the end of step 6 (folding Earlier with the selection inside it selects the
+   row above it, which may be a real session).
+5. **The switcher, without Enter.** Look at the key bar's `Focus: …` and keep it in mind. Press
+   Ctrl+Shift+P. Expected: a panel over the window with a field on top whose caret blinks,
+   `Switch to a session…  (title, group, note, PR, directory, short id)` while it is empty;
+   under it your sessions under the headings `Needs you`, `Open`, `Not running` and `Done` (a
+   heading shows only when it has a session), each with its short id at the right; at the bottom
+   a footer that starts `↑ ↓ move · Enter`. When no such panel shows, type nothing and write that
+   down. Type the ticket key of step 1 (`orb-2107`).
+   Expected: the list narrows at each keystroke, and in the titles that hold the key its letters
+   are marked (a session that has it only as its group shows no mark).
+   Press ↓ a few times, then ↑: the highlight moves, and the footer's `Enter switch` or `Enter
+   resume here` follows the highlighted session. **Press no Enter**: it would switch to that
+   session, or resume it. Press Esc. Expected: the panel goes, and the key bar shows the `Focus: …`
+   it showed before.
+6. **The throwaway session, with Enter.** Press Ctrl+Shift+P again (the panel shows, its caret
+   blinks; else type nothing) and type the first 6 characters of the throwaway session's short id.
+   Wait until the sessions stop changing (a second). Look at the highlighted session: its short id,
+   at the right, must be the one you wrote down, whole. When it is another one, press ↓ until the
+   highlighted session's short id is the throwaway session's; when no session shows it, press Esc
+   and leave this step out. Read the footer: `Enter resume here` (the throwaway session has no
+   terminal in the window) or `Enter switch` (its terminal is in the window). Right before Enter,
+   after your last ↓, look at the highlighted session's short id once more: a late answer to your
+   last keystroke moves the highlight back to the first session. When it is still the throwaway
+   session's, press Enter once; when it is not, press Esc and leave this step out. Expected: the
+   panel goes and the throwaway session is selected; with `Enter resume here`, it is resumed into
+   the window (its row under Open, `starting…`, then its terminal, which takes the keyboard: `Focus:
+   terminal`); with `Enter switch`, its terminal shows and has the keyboard — or, when it runs in
+   another terminal, its card shows and the list has the keyboard. Type nothing into it: it stays as
+   it is, for the other checks. When step 4 left Earlier unfolded: with the throwaway session's row
+   now under Open, fold Earlier with a click on its header; with its row still in Earlier, leave
+   Earlier unfolded and write that down.
+
+Write down: whether any answer of the list came late enough to notice (the filter as you typed,
+the chips, the stack, the switcher); whether the switcher's order — those that need you, then
+Open, then the ones not running, then the done ones — is the one you want; what Enter did in
+step 6; every step that showed something else than described.
+
+## W31. The filter's and the switcher's fields on your layouts
+
+Run it once on the US layout and once on the Czech one (Win+Space switches, W8). Setup: the
+throwaway session selected (look at the short id), the filter empty.
+
+1. Click into the filter's field: its caret blinks. Type `\ [ ] { } @ # ~ |`, each with the keys
+   your layout has for it (on the Czech layout with AltGr), and on the Czech layout also the dead
+   keys: háček, then `e` (`ě`), čárka, then `e` (`é`). Expected: each character shows in the field
+   as typed, and nothing else happens: no dialog, no other session selected, the key bar shows
+   no new message. Press Esc: the field is empty.
+2. Press Ctrl+Shift+P. Expected: the switcher's panel, its caret blinking in its field. When no
+   panel shows, type nothing: write that down and leave this step out. Type the same characters
+   and, on the Czech layout, the same dead keys; press no Enter. Expected: each character shows in
+   the switcher's field as typed, and nothing else happens (most likely the panel says `No session
+   matches.`). Press Ctrl+Shift+P: the panel goes. Press Ctrl+Shift+P again: it shows, with an
+   empty field; press Esc: it goes.
+3. Switch back to the layout you work with (Win+Space).
+
+Write down, per layout and per field: every character that did not show as typed, or that did
+something else; whether Ctrl+Shift+P opened and closed the switcher.
+
+## W3, the icon
+
+Setup: the window open after the update to stage E (`git pull` and `skydeck window`, install.md,
+"Updating"; the page reloads itself for the new build), the throwaway session selected (look at
+the short id).
+
+1. Look at the window's taskbar button and at the left end of the window's own title bar (Edge's,
+   above the page). Expected: skydeck's icon, a deck of three session cards on a blue rounded
+   square, the front card white with a prompt (`>_`) on it; not Edge's.
+2. In W: `skydeck window --restart`. Expected: the same window stays and says `skydeck's server
+   restarted; your sessions kept running`. Look at the button again.
+3. When the button showed Edge's icon in step 1 or 2, write that down, and look at it again the
+   next time the window is opened anew: after you closed it for a reason of your own, or after a
+   restart of the PC (do not close it for this check).
+4. After a WSL restart: look at the button again only after one that comes anyway — W16's main
+   part, W14's third part, or one of your own. Never restart WSL for this check: what a restart
+   ends is in W16, "What `wsl --shutdown` ends", and W16's "Prepare" says when one may be done.
+   When none came, write down "left out".
+5. Edge's menu of the window: when Edge's title bar above the page has a `…` button, click it and
+   read the entries without choosing any: does one offer to install the page, or the site, as an
+   app? **Do not install it.** Close the menu with Esc. When there is no such button, write that
+   down.
+
+Write down: the icon the button and the title bar showed, after the update, after the restart (and
+when the window was opened anew, after a WSL restart, or "left out"); whether Edge's menu offered
+to install the page as an app, in its own words.

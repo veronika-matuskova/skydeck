@@ -453,13 +453,14 @@ running when the window or skydeck's server is closed or restarted: each termina
 python3 process of its own, its **keeper**. A session ends only when you end it inside `claude`; the
 window has no action that stops one.
 
-This is stages A, D, B and C of step 2 ([design-step-2.md](design-step-2.md), section 19): the
-list, the terminals, resume and new (A); editing in the window — the label, group, note, done mark
-and pull requests, and the ticket link (D); which sessions need you, with desktop notifications
-(B); and restore in the window after a restart, with `--window` and `"terminal": "window"` for the
-commands (C). The search beyond one text comes in a later stage. The commands of step 1 stay as
-they are, also while the window runs: `skydeck resume`, `new` and `restore` start `claude` in the
-terminal you type them in, not in the window — unless you give `resume` or `new` the option
+This is stages A, D, B, C and E of step 2 ([design-step-2.md](design-step-2.md), section 19):
+the list, the terminals, resume and new (A); editing in the window — the label, group, note, done
+mark and pull requests, and the ticket link (D); which sessions need you, with desktop
+notifications (B); restore in the window after a restart, with `--window` and `"terminal":
+"window"` for the commands (C); and search — several words and the short id in the filter, the
+chips, stacks and the quick switcher — with the page's own icon (E). The commands of step 1 stay
+as they are, also while the window runs: `skydeck resume`, `new` and `restore` start `claude` in
+the terminal you type them in, not in the window — unless you give `resume` or `new` the option
 `--window`, or set `"terminal": "window"` ("Starting sessions in the window from a terminal (stage
 C)" below).
 
@@ -671,8 +672,7 @@ effect.
   use the `+ New` button there), with its directory,
   label, group and `claude` flags.
 - **A session that ended** keeps its last screen, dimmed, under a bar with Resume and Close.
-- **Keys**: **Ctrl+Shift+H shows every key of the window**, those that come in later stages
-  marked so (they say `<key>: comes in a later stage` when pressed). The window takes only Ctrl+Shift
+- **Keys**: **Ctrl+Shift+H shows every key of the window**. The window takes only Ctrl+Shift
   chords with a letter or a digit, and Ctrl+Tab, besides the list's own keys while the list has the
   keyboard; every other key goes to Claude Code (Alt chords, Ctrl with a letter, function keys, Esc
   in the terminal). Three to know from the start: Ctrl+Shift+L moves the keyboard between list and
@@ -971,7 +971,8 @@ a WSL terminal of your own, run `skydeck window`:
   starting, the rest are `not started`. One that `skydeck restore` asked for stops with Ctrl+C in
   its terminal, as in step 1.
 - **`Not now`** hides the banner for this restart, also across `skydeck window --restart`;
-  `skydeck restore` still offers the sessions, and the banner comes back after the next restart.
+  `skydeck restore` still offers the sessions, and so does the quick switcher (stage E: `>restore`,
+  "The quick switcher (stage E)" below); the banner comes back after the next restart.
   When the offer changed meanwhile, it says `this offer to restore is no longer shown`.
 - **The settings are the server's.** A restore in the window uses the `restoreBatch`,
   `restoreMinFreeMb`, `restoreStartTimeoutSeconds` and `claudeCommand` that the server read when it
@@ -1062,6 +1063,169 @@ started`.
 under it: `holder:    pid 4242 since 2026-11-12T08:58:00.000Z (in the skydeck window)`. It needs no
 running server and asks it nothing; `--json` is unchanged.
 
+#### Search, the chips and stacks (stage E)
+
+**The filter** is the field at the top of the list, `Filter: title, group, note, PR, directory,
+short id   /` while it is empty. A click into it, or `/` while the list has the keyboard
+(`Focus: list`), gives it the keyboard: its border takes the selection's colour and the caret
+blinks in it. What you type there is text, and the list follows each keystroke; but Enter ends
+the entry and gives the keyboard back to the list, Esc does the same and clears the field, Tab
+goes on to the chips below, and the window's keys (its Ctrl+Shift chords and Ctrl+Tab) and the
+reload keys act as anywhere, but Ctrl+Shift+V, which pastes into the field as the browser does. With the keyboard on the list, Esc clears the filter, and the next Esc goes to the
+terminal.
+
+- **Words.** The text is split at white space into words, and a session is listed when every
+  word, in any order and in either case, is found in one of its fields: the title, the group, the
+  note, the directory, or an attached pull request (`owner/repo`, its number, or
+  `owner/repo#number`). `orb login` lists a session titled `ORB-2107 fix login`, and `web#7` one
+  with `acme/web #7` attached. A word is never found across two fields.
+- **The short id.** A word of at least 4 characters also lists the session whose id starts with
+  it: the first characters of the short id in the header (or in `skydeck ls`'s last column), or
+  the whole id. A shorter word is looked for in the fields only, so that `fix 2` does not list
+  nearly every session through the digits of its id.
+- **While filtering** — a word in the field, or one of the chips below but `Show done` — done
+  sessions are listed too, with their `done` mark; every section is unfolded and every stack flat
+  (below); the footer `17 done hidden · show` is not shown; and nothing folds: ← and → do nothing,
+  nor does a click on Earlier's header. A filter that leaves no session says `No session matches
+  the filter.` A text of white space only is no filter. The title bar's counts, the `need you`
+  count and `(3) skydeck` do not change with the filter: they count what the list lists without
+  it.
+
+**The chips**, under the field: `Running` (the sessions under Open), `Open PR` (those with a pull
+request that is not merged or closed: open, draft, `not fetched` or `can't read`), `Has note`, and
+`Show done`. A click turns one on or off, drawn pressed while it is on, and leaves the keyboard
+where it was. Every chip that is on must hold, with every word: `Running` with `Has note` lists
+the running sessions that have a note. `Show done` is the same switch as the list key `a` and the
+footer's `show` (`done sessions shown · hide`): each turns the others on and off, and it shows
+done sessions without filtering. Esc clears the words, not the chips: a chip stays on until it is
+clicked again, the page reloads, or the switcher (below) clears it to show a session it hides.
+The chips are buttons: Tab from the field reaches them, Enter or Space presses the one that has
+the keyboard, and while one has it no list key acts.
+
+**Stacks.** In This week and in Earlier, each on its own, the sessions of one group stack under
+the newest when there are at least two. The newest, the stack's head, shows `×4` after its ticket
+key (or its group); while the stack is closed the line `+3 more in ORB-2107` follows it, which is
+no row: it is never selected, and ↑ ↓ pass over it and the sessions it hides. An open stack's
+other sessions follow the head, indented. A group is its exact text: `ORB-1` and `orb-1` are two.
+Never in a stack: the sessions under Open, a session that has a terminal of the window (an ended
+one too), and a session that needs you, so that no session that needs you ever hides in a
+closed stack. A section's
+count counts every session in it, those of a closed stack too.
+
+- A click on `×4` or on the `+3 more` line opens or closes the stack. It selects nothing and
+  leaves the keyboard where it was, but a click on `×4` that closes the stack while one of its
+  members is selected selects the head first. A double click on either acts once.
+- In the list (`Focus: list`): → on a closed head opens the stack, ← on an open head closes it,
+  and ← on a member selects the head and closes the stack. Otherwise ← and → fold and unfold
+  Earlier as before: on a session in no stack, and also ← on a closed head and → on an open head
+  or on a member.
+- A stack whose member becomes the selected session opens, however that happens (the switcher,
+  or a newer session of its group that makes the selected one a member), and stays open when the
+  selection leaves, until you close it. Ctrl+Tab skips a member of a stack you closed (the page
+  does not know a closed stack's members), as it skips a session that the filter or the folded
+  Earlier hides and that no terminal of the window holds.
+- `d` on a closed stack's head marks that session only: the next one becomes the head (or the
+  last one stands alone), and the selection goes to the row after the stack (stage D's rule takes
+  the row after it among those the list drew, and the stack's other sessions were not drawn).
+  With done sessions shown the session stays listed, still the head, and stays selected.
+- While filtering, every session stands alone.
+
+Each window has its own filter, chips, open stacks, folded Earlier and done shown. A reload (F5)
+forgets all of them: the page starts again with an empty filter, no chip on, Earlier folded, done
+sessions hidden and no stack opened. What a window shows of a session is the same in every
+window.
+
+#### The quick switcher (stage E)
+
+**Ctrl+Shift+P**, or `Switch…` at the right of the title bar (the key bar's hint is `Ctrl+Shift+P
+switch`), opens the quick switcher over the window: a field with the keyboard in it, `Switch to a
+session…  (title, group, note, PR, directory, short id)` while it is empty, and under it every
+session the list lists with done ones shown — also those that the filter, the chips, the folded
+Earlier or a closed stack leave out of the list — under those of four headings that have a
+session: `Needs you` (in Ctrl+Shift+J's order), `Open` (in Open's order, the slots first), `Not
+running` (the most recent first) and `Done` (the done sessions that are not running, the most
+recent first). Each session
+shows its title, its state (`not running · 3h` for one that is not running) and its directory,
+its pull-request chip, its slot and, at the right, its short id. Type to narrow it: the words
+are the filter's (each must be found in a field, or, with at least 4 characters, start the id),
+and the words found are marked in each title. At most 50 sessions are listed; the footer then
+says how many more match: `… · 3 more: type to narrow`.
+
+In its field ↑ ↓ move the highlight, PgUp and PgDn by a page; Enter acts on the highlighted
+session; Esc, or Ctrl+Shift+P again, closes the switcher, and the keyboard goes back where it
+was; Tab and Shift+Tab do nothing; every other key is text (Ctrl+Shift+V too, which pastes as
+the browser does). The footer names the keys and what
+Enter does to the highlighted session: `↑ ↓ move · Enter switch · Esc close` for a session that
+has a terminal of the window or runs in another terminal, `↑ ↓ move · Enter resume here · Esc
+close` for one that has neither — a session that is not running, or one whose program runs
+without skydeck knowing where (step 1's resume then refuses it). A click on a session does what
+Enter does (a double click acts once); a click outside the panel closes the switcher.
+
+**Enter** closes the switcher, selects the session and does what Enter on its row in the list
+does:
+
+- a session with a terminal of the window: its terminal shows and takes the keyboard (an ended
+  one under its bar);
+- a session that runs in another terminal: its card, and the list has the keyboard;
+- every other session (`Enter resume here`): it is resumed into the window, the list has the
+  keyboard until its terminal comes and takes it. A refusal (an expired session's, for one) shows
+  on its card, or in the key bar when the list does not show the session.
+
+When the list does not show that session, the list first changes so that it does, by what hides
+it: the filter's field and the chips are cleared (the key bar says `the filter was cleared to
+show <short id>`), done sessions are shown, Earlier is unfolded; a closed stack opens by itself
+for its selected member.
+
+Enter acts only on the answer to what you typed: pressed right after a keystroke, it waits for that
+answer (usually a fraction of a second) and then acts on the highlighted session of it, the first
+one — the highlight goes to the first session of each new answer, and stays on its session while a
+list only moves the sessions. Typing on, closing the switcher or a lost connection drops a waiting
+Enter. While the page is not connected the switcher says `skydeck's server is not connected` in
+place of its sessions, and Enter does nothing. When no session matches it says `No session matches.`
+
+While the switcher is shown the window under it takes no click and no key. Every window chord but
+Ctrl+Shift+P (and Ctrl+Shift+V, the field's paste) says `close the switcher first (Esc)` in the key
+bar and does nothing else, Ctrl+Shift+H too (opening the switcher hides the key help); the reload
+keys reload. While one of stage D's dialogs is open, Ctrl+Shift+P and `Switch…` say `close the edit
+first (Esc)`. Each window has its own switcher.
+
+**The restore offer** (stage C). After `Not now` on the restore banner, the switcher still offers
+that restore until WSL restarts, in command form only: type `>restore` (or `>r`, `> rest`, `>
+RESTORE`: a text whose first character is `>`, and after it at least the first letter of
+`restore`; `>` alone lists nothing), and the
+entry `Restore 3 sessions from yesterday at 18:02` is listed (the time as the banner says it),
+while no restore runs. Enter on it, not a click (a click on it does nothing), restores the
+sessions the banner had preselected, and the run's report shows where the banner's report shows;
+the footer then says `↑ ↓ move · Enter restore · Esc close`. A text
+that starts with `>` lists no session; without the offer it says `No command matches. > restore
+is listed after Not now on the restore banner, until WSL restarts.` Every other text lists
+sessions only (` >restore`, with a space first, looks for the word `>restore`), so the offer is
+never one Enter away.
+
+#### A selected session the list does not show (stage E)
+
+When the list stops showing the selected session — the filter or a chip hides it, done sessions
+are hidden again, or a filter is cleared while Earlier is folded and the session is in it (← and
+a click on Earlier's header select the row above it before they fold) — no row is selected and
+the list's keys act on none: `l`, F2, `g`, `n`, `p` and `d` say `no session selected`. When a
+terminal of the window holds the session, the right side keeps it: the terminal with its header,
+whose controls edit that session as usual (a click on the title, ✎, `Note`, `Done`, `Pull
+requests`), and once its program has ended, the ended bar with Resume and Close. A session
+without a terminal of the window shows nothing on the right then, no card. `Done` in the header
+of such a session says `Marked done. Stays under Open while it runs; hidden once it
+stops.` while it runs or starts, else `Marked done: hidden from the list. It comes back on new
+activity.` The new form (Ctrl+Shift+N) starts in its directory while a terminal of the window
+holds it. When the list shows the session again (the filter cleared), it is selected again.
+
+#### The icon (stage E)
+
+The page has an icon of its own, a deck of three session cards on a blue rounded square, the front
+card white with a prompt (`>_`) on it, for
+the window's taskbar button and its title bar; manual check W3 says whether Edge shows it there.
+The page also has a manifest, for the icon: Edge's menu may offer to install the page as an app.
+Do not: the window is opened by `skydeck window`, and the page is built not to be installable (its
+manifest names no start address).
+
 ### Known limits of stage A
 
 - **The keep-alive is not verified** (above; W14).
@@ -1101,10 +1265,9 @@ running server and asks it nothing; `--json` is unchanged.
   With several windows open, clicking into a window can give it the terminal's size while the
   program has asked for focus reports.
 - **The list.** An expiring session says `expires soon`, without the number of days. From an empty
-  filter field it is two Escs to the terminal. The ended bar of a selected session that the filter
-  hides offers no Resume, and Close only once the end is known: clear the filter. A resume card's
-  warnings about flags (`original flags unknown; resuming with defaults`, flags not passed on)
-  show until the terminal replaces the card, not after a successful resume. In one rare case
+  filter field it is two Escs to the terminal. A resume card's warnings about flags (`original
+  flags unknown; resuming with defaults`, flags not passed on) show until the terminal replaces
+  the card, not after a successful resume. In one rare case
   (a click outside the list and, within a double click's time, a click on a row a list update has
   just moved under the pointer) that row is resumed as by a double click.
 - **A flood of output.** When a program writes faster than skydeck can show (megabytes at once), a
@@ -1123,8 +1286,6 @@ running server and asks it nothing; `--json` is unchanged.
 
 ### Known limits of stage D
 
-- **A session the filter hides has no header**, and so is not edited: its keys say `no session
-  selected`. Clear the filter first (Esc).
 - **Two windows.** Label, group and done are last-write-wins between two windows, and between a
   window and a command, as between two commands. Only the note is guarded: a save over a note that
   changed meanwhile is refused, with your text kept in the box.
@@ -1207,6 +1368,42 @@ running server and asks it nothing; `--json` is unchanged.
   Closing the terminal, or restarting the server, ends the window's refusal sooner; then only the
   session's resume lock refuses, until 60 seconds after the launch. Wait a minute before you start
   such a session again.
+
+### Known limits of stage E
+
+- **How far search reads.** A word counts in its first 64 characters, and only the first 16 words
+  of a text count: a longer filter is cut after its 16th word (the key bar says `the filter is
+  cut to its first 16 words`), and the switcher's footer says `only the first 16 words are
+  searched` (`only the first 1,024 bytes are searched` for a text over 1,024 bytes). Each field
+  is searched in its first 16,384 characters (a long note in the first 16,384 characters of its
+  text). Characters are counted as JavaScript counts them, in UTF-16 units: most emoji count as
+  two.
+- **The switcher lists at most 50 sessions**: type more to narrow it.
+- **A title whose lower case is longer** than the title itself (a few letters such as `İ`) shows
+  no marked words in the switcher.
+- **A character you cannot see**, a zero-width space or a control character pasted into the field,
+  is part of a word: a filter that looks empty, or like a plain word, can then list nothing. Clear
+  the field (Esc) and type it again.
+- **The `need you` count and a filter.** A done session that needs you and that a filter lists
+  shows its mark, and Ctrl+Shift+J reaches it, but the title bar's count leaves it out (without
+  the filter it is not listed), so the key bar's `… hidden by the filter or the fold` counts one
+  too few for each such session.
+- **`d` while filtering.** The toast says `Marked done: hidden from the list. It comes back on new
+  activity.` while the filter still lists the session, with its `done` mark.
+- **Stacks the window cannot remember.** A group over 1,024 bytes (of UTF-8) opens its stack only
+  while one of its members is selected. A window remembers at most 64 open stacks: opening
+  another closes the one opened first.
+- **The automatic pull-request refresh** (design.md 7.3) follows the sessions the list's
+  sections show, and a selected session the list does not show while a terminal of the window
+  holds it (its header shows its pull requests). So it leaves out the sessions inside a closed
+  stack and the switcher's, as it leaves out those of a folded Earlier: open the stack, or use `↻`
+  in the session's pull-request dialog.
+- **A session that a terminal of the window went on in, and that ended before its first
+  prompt**, has no transcript, so the list does not list it once its program has ended — for
+  one, `/clear` in a resumed terminal (Claude Code goes on in a new session there), then `/exit`
+  before any prompt. Selected, its ended terminal keeps stage A's bar, without Resume, and with
+  Close only once the end is known. (A session started with Ctrl+Shift+N keeps its row while its
+  terminal is there, with Resume on its ended bar.)
 
 ### What `doctor` says about the window
 
