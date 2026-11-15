@@ -1682,17 +1682,30 @@ the first time one of them is known and never removed.
 ### 10.3 When a turn ends
 
 A turn ends when a holder's live-session file changes its `status` from `busy` or `waiting` to
-`idle`, the file still naming the same session and the same process (pid and process start).
-The server sees that at its one-second look and records, for that session, the next
-`attention_seq` as `turn_ended_seq` and the file's `statusUpdatedAt` (else the time it saw the
-change) as `turn_ended_ns`. When the session is being seen at that moment (12.4), the same write
-sets `seen_seq` to a later value, so a turn that ends in front of the user is never "finished".
+`idle`, the file still naming the same session and the same process (pid and process start). The
+server sees that at its one-second look and records, for that session, the next `attention_seq` as
+`turn_ended_seq` and, as `turn_ended_ns`, the idle file's status time: its `statusUpdatedAt`, else
+its `updatedAt`, else the time the server saw the change. When the file has one of the two, that is
+exactly the time the look keeps for the file (stage B's plan, contract 2.5's `sinceNs`), so that it
+can be compared for equality with the status time the session shows (12.4), never across two clocks.
+When the session is being seen at that moment (12.4), the same write sets `seen_seq` to a later
+value, so a turn that ends in front of the user is never "finished".
 
 `busy` to `waiting` is not a turn end (a dialog opened inside the turn). A file that names another
 session than at the last look (`/clear`) starts over. A look that cannot read a file (it is being
 rewritten, or the read fails) keeps the last status seen as the baseline; only a file read whole
 and parsed moves it. The first look after the server starts only sets the baseline: a turn that
 ended while no server was running is not recorded (a known limit; 12.4).
+
+The look keeps one **baseline per pid** (stage B's plan, B4): the last file of that pid read whole,
+parsed and trusted (design 5.5: its `pid` and `procStart` are a running process). A file not read at
+a look — being rewritten, unreadable, untrusted, or `/proc` could not be read — keeps its baseline;
+a file read is the new one. A baseline is dropped when its pid is gone and no file of it was read at
+that look: `/proc` says the pid has no process, or a process with another start (a pid taken by
+another program, whose baseline would otherwise keep a dead holder's `waiting`, so that the session
+would ask until that program ends). The statuses attention reads (12.4) are the baselines', so a
+file being rewritten does not make a mark blink. The rule is pure, `isTurnEnd` and `lookAt` of
+`src/claude/terminal.ts` (4.3); the server reads the files and asks `/proc`.
 
 **Decided against: a `Stop` hook** (design 16 had planned turn hooks for step 2). The live-session
 file already says when a turn ends, for every session, including those running outside the window,
@@ -1932,10 +1945,38 @@ A session **needs you** for one of three reasons, in this order:
 Seen is a **condition that holds**, not a moment: a session **is being seen** while it is the
 selected one in a window that has focus, from 1.5 seconds after it was selected; typing into its
 terminal makes it seen at once. While it holds, the server sets `seen_seq` to the next counter
-value (10.2) at every tick — written at most once per 5 seconds per session, and always in the
-same write as a turn end that happens meanwhile (10.3) — so a turn that ends in front of the user
-never shows "finished". Order is by the counter, never by clock times (10.2). A turn that ended
-while no server ran is not recorded (10.3), so it shows no "finished".
+value (10.2) when that clears a mark, and always in the same write as a turn end that happens
+meanwhile (10.3) — so a turn that ends in front of the user never shows "finished". Order is by
+the counter, never by clock times (10.2). A turn that ended while no server ran is not recorded
+(10.3), so it shows no "finished".
+
+**When the hold starts, what typing is, when `seen` is written** (stage B's plan, B9; ruled by the
+plan owner). A page holds a session from the moment that page has focus with that session selected;
+any change of either starts the 1.5 s again, so a window that comes back to the front sees after
+1.5 s too, and focus lost ends the hold at once. Several windows each hold their own; a session held
+in any of them is seen. Typing is an `input` that is not `binary` and is not a report a terminal
+sends by itself, told by its shape: focus reports (`ESC [ I`, `ESC [ O`), SGR mouse reports (`ESC [ <`
+digits and `;`, then `M` or `m`) and the answers to queries (device attributes, cursor position and
+status reports, mode reports, `CSI t`, the colours of OSC 4, 10 and 11, DECRQSS). A program that
+asks for focus reports (9.2; Claude Code is expected to, not yet checked with the real program) gets
+one at every click, chord and return to the window, and a mouse report is no key, so none of them is
+typing (else every selection would clear its mark at once). The page swallows the queries (9.3), so
+no answer arrives today; were one to come, it is still not typing (a false "typing" clears a mark
+unread, a false "not typing" costs the user 1.5 s), and a key whose encoding has a report's shape,
+such as Shift+F3 (F3 with any modifier has the bytes of a cursor position report), does not count as
+typing either: the hold's 1.5 s apply. An OSC or DCS answer counts only when it is whole in one
+message, and a paste holds no ESC (9.1) but its two brackets. The user's own acts on a terminal
+without a key are typing: the wheel over a program in the alternate screen that asked for no mouse
+reports and an Alt+click, both arrow keys, and an empty paste. Typing into the selected session's
+terminal of a focused window completes the hold at once and it holds as long as the selection and
+the focus do; typing into another terminal, or into the selected one's while the window has no
+focus, makes the session it shows seen once. A `seen` is written only when it clears a mark — a hold
+completes, a typing comes, or a mark of a session already being seen becomes known — and always in
+the write of a turn end or window end of that session while the hold lasts; there is **no periodic
+`seen` write**: nothing writes to the store every few seconds because a window has focus. It is
+written only for a session among the list's rows, so that a selection naming no session leaves no
+row. The hold is `src/window/seen.ts` on the server's clock (`Clock.after`, which a step of the wall
+clock does not move).
 
 Ctrl+Shift+J selects the next session that needs you: those that ask, the longest-waiting first;
 then those that ended; then those that finished, oldest first. Pressed again it goes on; after the
