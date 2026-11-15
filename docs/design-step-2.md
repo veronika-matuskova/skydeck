@@ -2945,7 +2945,10 @@ In the browser suite, besides those:
   an installed Chromium the page suite fails with the one command that installs it — exactly
   `Chromium for Playwright is not installed; run: npx playwright install chromium`, which a test
   pins — so that a local check does not pass where CI would fail.
-- CI, on every pull request: both legs of the Node matrix run format check, type checks, `npm
+- CI, on every pull request and every push to `main`, runs the newest leg of the Node matrix
+  (Node 24). The oldest leg (Node 24.12) runs only when the workflow is started by hand
+  (`workflow_dispatch`: the owner's decision, to save CI minutes), and a run started by hand runs
+  both legs. A leg runs format check, type checks, `npm
   test` (keeper and server tests included; Ubuntu runners have python3), `python3 -m py_compile
   bin/skydeck-keeper`, the vendored-files check (16.6: `test/vendor/vendor.test.ts`, a test in
   `npm test` that needs the packages `npm ci` installed, so it has no step of its own), and
