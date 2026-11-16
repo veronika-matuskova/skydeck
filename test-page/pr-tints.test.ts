@@ -67,7 +67,7 @@ function pr(level: string): Row {
 const merged = (count: number): Row[] => Array.from({ length: count }, () => pr('merged'));
 
 /**
- * A list whose This week holds `rows`, with `selected` (S2 8.2.3), and while the page's view has
+ * A list whose Recent holds `rows`, with `selected` (S2 8.2.3), and while the page's view has
  * a switcher text the switcher's payload for it: every row, not running, in their order (E9).
  */
 function listOf(

@@ -13,7 +13,7 @@ import type { TerminalInfo, TerminalState } from '../hub.ts';
 import type { RowPayload } from '../protocol.ts';
 import { windowChip } from './chip.ts';
 
-/** S2 12.1: This week holds what was last active at most 7 days ago. */
+/** S2 12.1: Recent (key `week`) holds what was last active at most 7 days ago. */
 const WEEK_NS: Ns = 7n * 86_400n * 1_000_000_000n;
 
 /** The note lines a row carries (S2 8.2.3: "the note's first three lines"). */
@@ -25,7 +25,9 @@ const NOTE_LINE_MAX = 1024;
 
 /** A terminal in these states may still come to hold a session (S2 7.5); one that ended, was lost or
  *  never started has no program that could. Shared inside the view model (ruled, #45): `rowPayload`'s
- *  `starting` and `buildListMessage`'s choice of a row's terminal read this one set. */
+ *  `starting` and `buildListMessage`'s choice of a row's terminal read this one set. THE PAGE COPIES
+ *  IT (web/pane.js, `MAY_START`, held equal by test/web/pane.test.ts: which line ← and `×n` say on
+ *  a block an unreported terminal holds open, F6); a change of one is a change of the other. */
 export const MAY_START: ReadonlySet<TerminalState> = new Set([
   'starting',
   'running',
@@ -35,8 +37,8 @@ export const MAY_START: ReadonlySet<TerminalState> = new Set([
 
 /**
  * S2 12.1: Open for a row that is open (running or starting, in the window or elsewhere: the caller
- * knows the terminals); else This week when its last activity is at most 7 days before `nowNs` (or
- * after it: the clock can step back); else Earlier.
+ * knows the terminals); else Recent (key `week`) when its last activity is at most 7 days before
+ * `nowNs` (or after it: the clock can step back); else Earlier.
  */
 export function sectionOf(row: ListRow, nowNs: Ns, isOpen: boolean): 'open' | 'week' | 'earlier' {
   if (isOpen) {

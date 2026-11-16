@@ -181,6 +181,27 @@ async function headers(page: Page): Promise<string[]> {
   );
 }
 
+/**
+ * The tooltips the headers carry (F5): `<section> <class of the element>: <its tooltip>` for the
+ * header and every element in it whose `title` is not empty, so that a header with none adds
+ * nothing and a tooltip on the wrong element shows.
+ */
+async function headerTips(page: Page): Promise<string[]> {
+  return readPage(
+    page,
+    () =>
+      [...document.querySelectorAll('#list .list-section')].flatMap((header) =>
+        [header, ...header.querySelectorAll('*')]
+          .filter((part) => part instanceof HTMLElement && part.title !== '')
+          .map(
+            (part) =>
+              `${(header as HTMLElement).dataset['section']} ${(part as HTMLElement).className}: ${(part as HTMLElement).title}`,
+          ),
+      ),
+    null,
+  );
+}
+
 /** What the page sent after the mark `name`: the types of its messages, pings left out. */
 async function sentAfter(page: Page, name: string): Promise<string[]> {
   return after(await logOf(page), name)
@@ -310,7 +331,7 @@ function fullPr(
   };
 }
 
-/** A `list` with sections Open, This week and Earlier holding these rows. */
+/** A `list` with sections Open, Recent and Earlier holding these rows. */
 function fullList(
   sections: { open?: RowPayload[]; week?: RowPayload[]; earlier?: RowPayload[] | 'folded' },
   terminals: TerminalPayload[] = [],
@@ -415,8 +436,8 @@ test('the list', async (t) => {
       session(d, S3, 20n * DAY);
       session(d, S4, 30n * DAY);
 
-      // This week most recent first; Earlier folded: its header only, with its count and span.
-      await untilDrawn(page, (rows) => rows.length === 2, 'two rows of This week');
+      // Recent, the most recent first; Earlier folded: its header only, with its count and span.
+      await untilDrawn(page, (rows) => rows.length === 2, 'two rows of Recent');
       await healthy(page, l.problems);
       assert.deepEqual(await drawnIds(page), [S1, S2]);
       assert.deepEqual(
@@ -425,8 +446,13 @@ test('the list', async (t) => {
       );
       assert.deepEqual(await headers(page), [
         'open Open 0',
-        'week This week 2',
+        'week Recent 2',
         'earlier Earlier 2 20d–30d ago',
+      ]);
+      // F5: the key `week` reaches the page (`data-section` above) and its header is titled
+      // Recent, with the exact meaning one hover away; the other two headers carry no tooltip.
+      assert.deepEqual(await headerTips(page), [
+        'week section-title: last active in the last 7 days',
       ]);
       const [first] = await drawn(page);
       assert.equal(first?.title, hostile);
@@ -443,10 +469,9 @@ test('the list', async (t) => {
         (await drawn(page)).map((row) => row.section),
         ['week', 'week', 'earlier', 'earlier'],
       );
-      assert.deepEqual(await headers(page), [
-        'open Open 0',
-        'week This week 2',
-        'earlier Earlier 2',
+      assert.deepEqual(await headers(page), ['open Open 0', 'week Recent 2', 'earlier Earlier 2']);
+      assert.deepEqual(await headerTips(page), [
+        'week section-title: last active in the last 7 days',
       ]);
       assert.ok((await sentAfter(page, 'unfold')).includes('view'));
 
@@ -457,7 +482,7 @@ test('the list', async (t) => {
       assert.equal(await selectedRow(page), S2);
       assert.deepEqual(await headers(page), [
         'open Open 0',
-        'week This week 2',
+        'week Recent 2',
         'earlier Earlier 2 20d–30d ago',
       ]);
       await healthy(page, l.problems);
@@ -513,7 +538,7 @@ test('the list', async (t) => {
       session(d, S3, 20n * DAY, [{ type: 'custom-title', customTitle: 'beta old' }]);
       session(d, S4, 4n * MIN, [{ type: 'custom-title', customTitle: 'beta done' }]);
       markDone(d.deck, S4);
-      await untilDrawn(page, (rows) => rows.length === 2, 'This week');
+      await untilDrawn(page, (rows) => rows.length === 2, 'Recent');
       await healthy(page, l.problems);
       const inField = (): Promise<boolean> =>
         page.evaluate(() => document.activeElement?.classList.contains('list-filter') === true);
@@ -878,7 +903,7 @@ test('the list', async (t) => {
         S3,
       );
       await sleep(300); // its view's list has landed
-      // A newer session joins This week at its top: every row below moves down one place, and
+      // A newer session joins Recent at its top: every row below moves down one place, and
       // S2 (not running) is now under the pointer.
       current = fullList({ week: [fullRow(S4, { lastActivityNs: ago(SEC) }), ...week] });
       s.send(current);
@@ -1276,7 +1301,7 @@ test('the list', async (t) => {
   );
 
   await t.test(
-    'a selected row that moves to another section is scrolled into view (Enter on a row deep in This week brings it to Open)',
+    'a selected row that moves to another section is scrolled into view (Enter on a row deep in Recent brings it to Open)',
     async (t) => {
       const ids = Array.from(
         { length: 60 },
@@ -1327,13 +1352,13 @@ test('the list', async (t) => {
           fullRow(S2, { lastActivityNs: ago(3n * DAY) }),
         ],
       });
-      // The sections too: This week first, as no server sends them, and drawn as sent.
+      // The sections too: Recent before Open, an order no server sends, drawn as sent.
       const sections = current['sections'] as SectionPayload[];
       current = { ...current, sections: [sections[1], sections[0], sections[2]] };
       const s = await scripted(t, chromium, () => current, 39);
       await untilDrawn(s.page, (rows) => rows.length === 4, 'four rows');
       assert.deepEqual(await drawnIds(s.page), [S3, S1, S2, S4]);
-      assert.deepEqual(await headers(s.page), ['week This week 3', 'open Open 1']);
+      assert.deepEqual(await headers(s.page), ['week Recent 3', 'open Open 1']);
       await toZone(s.page, 'list');
       await s.page.keyboard.press('Home');
       const order: (string | null)[] = [await selectedRow(s.page)];
@@ -1370,7 +1395,7 @@ test('the list', async (t) => {
         (rows) => rows.map((row) => row.id).join() === [S4, S2, S3, S1].join(),
         'the new order',
       );
-      assert.deepEqual(await headers(s.page), ['open Open 1', 'week This week 3']);
+      assert.deepEqual(await headers(s.page), ['open Open 1', 'week Recent 3']);
     },
   );
 
@@ -1398,7 +1423,7 @@ test('the list', async (t) => {
       await untilDrawn(s.page, (rows) => rows.length === 1, 'one row');
       assert.deepEqual(await headers(s.page), [
         'open Open 0',
-        'week This week 1',
+        'week Recent 1',
         'earlier Earlier 4 9d–30d ago',
       ]);
       assert.equal(await zone(s.page), 'Focus: terminal');

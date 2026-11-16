@@ -1,6 +1,6 @@
 /**
  * Blocks (S2 12.2, plan E6 as ruled 2026-11-16; the code calls a block a stack): in every section —
- * Open, This week, Earlier —, each on its own, the rows of one group sit together, open unless the
+ * Open, Recent, Earlier —, each on its own, the rows of one group sit together, open unless the
  * page closed the block. Pure.
  *
  * Which rows reach this rule is the caller's (`build.ts`): a section's rows, and none while

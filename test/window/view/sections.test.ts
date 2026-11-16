@@ -42,7 +42,7 @@ test('sectionOf: an open row is in Open, however old its last activity', () => {
   assert.equal(sectionOf(row, NOW, true), 'open');
 });
 
-test('sectionOf: a row that is not open and was active within 7 days is in This week', () => {
+test('sectionOf: a row that is not open and was active within 7 days is in Recent', () => {
   assert.equal(sectionOf(rowOf(ds({ id: S1, lastActivityNs: NOW })), NOW, false), 'week');
   assert.equal(
     sectionOf(rowOf(ds({ id: S1, lastActivityNs: NOW - 3n * NS_PER_DAY })), NOW, false),
@@ -50,14 +50,14 @@ test('sectionOf: a row that is not open and was active within 7 days is in This 
   );
 });
 
-test('sectionOf: exactly 7 days ago is still This week; a nanosecond more is Earlier', () => {
+test('sectionOf: exactly 7 days ago is still Recent; a nanosecond more is Earlier', () => {
   const week = rowOf(ds({ id: S1, lastActivityNs: NOW - 7n * NS_PER_DAY }));
   const older = rowOf(ds({ id: S1, lastActivityNs: NOW - 7n * NS_PER_DAY - 1n }));
   assert.equal(sectionOf(week, NOW, false), 'week');
   assert.equal(sectionOf(older, NOW, false), 'earlier');
 });
 
-test('sectionOf: a last activity after now (the clock stepped back) is This week', () => {
+test('sectionOf: a last activity after now (the clock stepped back) is Recent', () => {
   const row = rowOf(ds({ id: S1, lastActivityNs: NOW + 60n * SEC }));
   assert.equal(sectionOf(row, NOW, false), 'week');
 });

@@ -1,6 +1,6 @@
 // The list (S2 12.1, 12.2 stage A, 12.9's list zone, 12.10; plan task 27): the filter field, the
-// sections Open, This week and Earlier as the server sent them, rows of one or two lines, the
-// footer of done sessions, and the title bar's counts (`#counts`). Its interface is contract
+// sections Open, Recent (key `week`) and Earlier as the server sent them, rows of one or two lines,
+// the footer of done sessions, and the title bar's counts (`#counts`). Its interface is contract
 // 2.9's; app.js owns the selection, the zones and the keys and hands the list its actions. What
 // each element says comes from web/list-text.js; everything from the server reaches the DOM as
 // text (textContent, title), never as markup.
@@ -31,6 +31,7 @@ import { needYouText } from './attention-text.js';
 import { createChips } from './chips.js';
 import { serverNow } from './format.js';
 import { countsText, footerText, rowText, sectionText } from './list-text.js';
+import { MAY_START } from './pane.js';
 import { moreNeedText, moreText, stackBadge } from './search-text.js';
 
 /**
@@ -64,6 +65,10 @@ const MAX_CLOSED = 64;
 const HOLDS_SELECTED = 'this block holds the selected session; it stays open';
 /** Ruled 2026-11-16 (review 2 of F3): what ← and `×n` say on a block a start holds open. */
 const HOLDS_STARTING = 'this block holds a session that is still starting; it stays open';
+/** F6 (L1, worded by the lead): what they say on a block that a terminal which ended before its
+ *  session was known holds open — waiting never frees it; closing that terminal (the ended bar's
+ *  Close) does. Short, so that the key bar shows it on one line at the window's usual widths. */
+const HOLDS_ENDED = 'this block holds a terminal that ended at its start; close it first';
 /** S2 8.2.3: a text of a view is at most 1,024 bytes of UTF-8 and well formed. */
 const TEXT_BYTES = 1024;
 const utf8 = new TextEncoder();
@@ -506,10 +511,11 @@ export function createList(root, hooks) {
 
   /**
    * Closes the block of `group` in `section` (E7): adds it to `closed`, the oldest dropped past
-   * MAX_CLOSED (that block opens again). With one of its members selected the head is selected
-   * first, as ← on a member does: a selected member keeps its block open (G5), and the page would
-   * forget the closing at the next list. A group the server would refuse is never sent: its block
-   * cannot be closed, and nothing happens (it stays open).
+   * MAX_CLOSED (that block opens again). With one of its members other than the head selected —
+   * which only ← on a member reaches: a click on `×n` refuses then (`toggleStack`, ruled) — the
+   * head is selected first: a selected member keeps its block open (G5), and the page would forget
+   * the closing at the next list. A group the server would refuse is never sent: its block cannot
+   * be closed, and nothing happens (it stays open).
    * @param {SectionPayload['name']} section
    * @param {string} group
    */
@@ -561,8 +567,9 @@ export function createList(root, hooks) {
       hooks.say?.(HOLDS_SELECTED);
       return;
     }
-    if (holdsStart(place.section, stack.group)) {
-      hooks.say?.(HOLDS_STARTING); // the server keeps it open: nothing moves
+    const held = heldLine(place.section, stack.group);
+    if (held !== null) {
+      hooks.say?.(held); // the server keeps it open: nothing moves
       return;
     }
     closeBlock(place.section, stack.group);
@@ -602,7 +609,8 @@ export function createList(root, hooks) {
    * it reported. A COPY OF THE SERVER'S RULE (`src/window/view/build.ts`, `stacked`'s
    * `unreported`; ruled 2026-11-16): the server draws a closed block open while one of its members
    * is such a row, and this page forgets that it closed it (render) and refuses to close it
-   * (`holdsStart`). A change of one is a change of the other.
+   * (`heldLine`, which tells the two lines apart by MAY_START, a copy too). A change of one is a
+   * change of the other.
    * @param {RowPayload} row
    */
   const unreported = (row) =>
@@ -610,20 +618,31 @@ export function createList(root, hooks) {
     current?.terminals.find((candidate) => candidate.id === row.terminal)?.sessionId === null;
 
   /**
-   * Whether the drawn block of `group` in `section` holds a member that `unreported` names: the
-   * server keeps it open, so ← and `×n` say so and do nothing.
+   * What ← and `×n` say on the drawn block of `group` in `section` when a member other than the
+   * head is one that `unreported` names — the server keeps it open, so they do nothing —, or null
+   * when none is: HOLDS_STARTING while such a member's terminal may still start (MAY_START; it also
+   * wins when both kinds hold the block, since it is the one that changes by itself), else
+   * HOLDS_ENDED (its terminal ended, was lost or never started before its session was known).
    * @param {SectionPayload['name']} section
    * @param {string} group
+   * @returns {string | null}
    */
-  const holdsStart = (section, group) =>
-    (current?.sections.find((candidate) => candidate.name === section)?.rows ?? []).some(
-      (row) =>
-        row.stack !== null &&
-        row.stack !== undefined &&
-        row.stack.role === 'member' &&
-        row.stack.group === group &&
-        unreported(row),
-    );
+  const heldLine = (section, group) => {
+    let held = null;
+    for (const row of current?.sections.find((candidate) => candidate.name === section)?.rows ??
+      []) {
+      const stack = row.stack ?? null;
+      if (stack === null || stack.role !== 'member' || stack.group !== group || !unreported(row)) {
+        continue;
+      }
+      const state = current?.terminals.find((candidate) => candidate.id === row.terminal)?.state;
+      if (state !== undefined && MAY_START.has(state)) {
+        return HOLDS_STARTING;
+      }
+      held = HOLDS_ENDED;
+    }
+    return held;
+  };
 
   /** The server's time now: the list's, counted on by the time since it came (`serverNow`). */
   const nowNs = () =>
@@ -753,6 +772,7 @@ export function createList(root, hooks) {
       const header = headerFor(section.name);
       const text = sectionText(section, now);
       setText(header.title, text.title);
+      setTip(header.title, text.tip);
       setText(header.count, text.count);
       setText(header.span, text.span);
       setData(header.root, 'folded', String(section.folded));
@@ -927,8 +947,9 @@ export function createList(root, hooks) {
         const place = placeOf(selected);
         const stack = place?.row.stack ?? null;
         if (place !== undefined && stack !== null && (stack.open || stack.role === 'member')) {
-          if (holdsStart(place.section, stack.group)) {
-            hooks.say?.(HOLDS_STARTING); // the server keeps it open: nothing moves
+          const held = heldLine(place.section, stack.group);
+          if (held !== null) {
+            hooks.say?.(held); // the server keeps it open: nothing moves
           } else {
             closeBlock(place.section, stack.group);
           }

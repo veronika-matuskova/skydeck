@@ -409,7 +409,7 @@ test('chips: while a chip is set Earlier is unfolded', () => {
 
 // --- blocks (E6 as ruled 2026-11-16: G1 to G5; the code calls a block a stack) ------------------
 
-/** Three rows of ORB-1 in This week, the newest first: S1, S2, S3. */
+/** Three rows of ORB-1 in Recent, the newest first: S1, S2, S3. */
 function orbWeek(): ListRow[] {
   return rows([
     idle(S1, 'ORB-1 fix one', MIN),
@@ -430,7 +430,7 @@ function orb(
   return { group: 'ORB-1', open: true, hiddenNeedYou: 0, ...over };
 }
 
-test('blocks: three rows of ORB-1 in This week are one block, OPEN by default — without `closed` and with `closed: []` (G1, G4)', () => {
+test('blocks: three rows of ORB-1 in Recent are one block, OPEN by default — without `closed` and with `closed: []` (G1, G4)', () => {
   for (const view of [{}, { closed: [] }, { closed: shut('open', 'ORB-1') }]) {
     const why = JSON.stringify(view);
     const message = buildListMessage(input({ rows: orbWeek(), view }));
@@ -441,7 +441,7 @@ test('blocks: three rows of ORB-1 in This week are one block, OPEN by default �
   }
 });
 
-test("blocks: `closed` naming This week and ORB-1 closes that block: the head only; count and time span all its rows'", () => {
+test("blocks: `closed` naming Recent and ORB-1 closes that block: the head only; count and time span all its rows'", () => {
   const message = buildListMessage(
     input({ rows: orbWeek(), view: { closed: shut('week', 'ORB-1'), selected: S1 } }),
   );
@@ -617,7 +617,7 @@ test('blocks: a row with an ended terminal of the window and a row that needs yo
 });
 
 test('blocks: a closed block whose member is drawn with a terminal that has not reported a session is drawn open, so that its row and its slot show (ruled 2026-11-16)', () => {
-  // Open: S1 (slot 1, reported) and S2 (slot 2, started for S2, not reported); This week: S3 and
+  // Open: S1 (slot 1, reported) and S2 (slot 2, started for S2, not reported); Recent: S3 and
   // S4, whose terminal (slot 3) ended before its program reported. All of `test`.
   const list = rows(
     [
@@ -711,7 +711,7 @@ test('blocks: a filter or a chip flattens every block, in every section', () => 
 
 test('blocks: `needYou` and the counts are the same with and without closed blocks; Ctrl+Shift+J reaches a hidden member (G5)', () => {
   // Open: S1 (slot 1, needs you: waiting), S2 (slot 2), S3 (slot 3, needs you), all of `test`;
-  // This week: S4, S5 (needs you: ended), S6 of ORB-1.
+  // Recent: S4, S5 (needs you: ended), S6 of ORB-1.
   const list = rows(
     [
       running(S1, { pid: 9001, transcript: { aiTitle: 'one' } }),
@@ -774,7 +774,7 @@ test('blocks: `needYou` and the counts are the same with and without closed bloc
 
 // --- the switcher (E8, E9) ---------------------------------------------------------------------
 
-/** S1 in the window (slot 1), S2 elsewhere; S3 not running, S4 done (This week); S5 not running,
+/** S1 in the window (slot 1), S2 elsewhere; S3 not running, S4 done (Recent); S5 not running,
  *  S6 done (Earlier). */
 function switchWorld(): Pick<ViewInput, 'rows' | 'terminals' | 'elsewhere'> {
   return {

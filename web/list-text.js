@@ -347,14 +347,19 @@ export function rowText(row, nowNs, terminal) {
 
 // --- sections, the footer, the counts (S2 12.1) -------------------------------------------------
 
-const SECTION_TITLES = { open: 'Open', week: 'This week', earlier: 'Earlier' };
+// The section with the key `week` (the key of the protocol and the code, S2 12.1) is titled
+// Recent, and its header's tooltip says what it holds exactly: a rolling 7 days, not the calendar
+// week (F5).
+const SECTION_TITLES = { open: 'Open', week: 'Recent', earlier: 'Earlier' };
+const SECTION_TIPS = { open: '', week: 'last active in the last 7 days', earlier: '' };
 
 /**
  * A section's header: its name and count, and while folded the time span of its rows (S2 12.1:
- * "the folded header shows the count and the time span"), newest first: `8d–41d ago`.
+ * "the folded header shows the count and the time span"), newest first: `8d–41d ago`; `tip` is
+ * the title's tooltip, empty for a section that has none.
  * @param {SectionPayload} section
  * @param {string} nowNs
- * @returns {{ title: string, count: string, span: string }}
+ * @returns {{ title: string, tip: string, count: string, span: string }}
  */
 export function sectionText(section, nowNs) {
   const newest = section.folded ? ageBetween(nowNs, section.lastNs) : '';
@@ -369,6 +374,7 @@ export function sectionText(section, nowNs) {
     title: Object.hasOwn(SECTION_TITLES, section.name)
       ? SECTION_TITLES[section.name]
       : clean(section.name),
+    tip: Object.hasOwn(SECTION_TIPS, section.name) ? SECTION_TIPS[section.name] : '',
     count: String(section.count),
     span,
   };

@@ -218,7 +218,7 @@ function compareOpen(a: Entry, b: Entry): number {
   return compareText(a.row.id, b.row.id);
 }
 
-/** This week and Earlier: the most recent first, ties by id. */
+/** Recent and Earlier: the most recent first, ties by id. */
 function compareRecent(a: Entry, b: Entry): number {
   return compareNs(b.row.lastActivityNs, a.row.lastActivityNs) || compareText(a.row.id, b.row.id);
 }
@@ -286,9 +286,9 @@ function stacked(
  *   open — running, or starting in a terminal of the window — whatever its done mark (S2 12.10);
  *   the row of a `new` terminal's own session while the terminal is there, one of its own when
  *   the session has none yet (A28), unless it is done and stopped.
- * - Sections (S2 12.1, `sectionOf`): Open, This week, Earlier; Earlier folded unless the view
- *   unfolds it or the view is filtering (S2 12.8), a folded one with its count and time span and
- *   no rows.
+ * - Sections (S2 12.1, `sectionOf`): Open, Recent (key `week`), Earlier; Earlier folded unless the
+ *   view unfolds it or the view is filtering (S2 12.8), a folded one with its count and time span
+ *   and no rows.
  * - Search (S2 12.8, plan E2–E5): the view's words (`searchWords` of `filter`) and chips choose the
  *   rows of the sections; with either set the view is `filtering`: done rows are listed too (with
  *   their done mark), `doneHidden` is 0, no section is folded and no stack is formed. `counts` are

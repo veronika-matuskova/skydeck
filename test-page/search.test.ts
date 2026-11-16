@@ -18,8 +18,10 @@ import { attachManualPr, markDone, setGroup, setNote } from '../src/sessions/met
 import { controlClient } from '../src/window/client.ts';
 import { sleep } from '../test/helpers/keeper.ts';
 import { S1, S2, S3 } from '../test/helpers/platform.ts';
+import type { TerminalState } from '../src/window/hub.ts';
 import type { ClosedBlock } from '../src/window/protocol.ts';
 import { stackRows } from '../src/window/view/search/stacks.ts';
+import { MAY_START as SERVER_MAY_START } from '../src/window/view/sections.ts';
 import type { ServerSandbox } from '../test/helpers/window.ts';
 import { startTestServer } from '../test/helpers/window.ts';
 import { browser, newPage } from './helpers/browser.ts';
@@ -41,6 +43,7 @@ import {
   shownText,
   TERM_A,
   TERM_B,
+  TERM_C,
   termOf,
   toZone,
 } from './helpers/shell.ts';
@@ -120,6 +123,44 @@ const VIEWS = `(() => {
 })();`;
 
 /**
+ * An init script that records in the page the `terminals` of the last `list` the page received
+ * (`receivedTerminals`): what the page itself knows of each terminal's session, which (c2)'s copy
+ * reads to refuse closing a block. It wraps the `onmessage` handler the page sets, so the page's
+ * own handler takes the same list right after it is recorded.
+ */
+const LISTS = `(() => {
+  const record = (event) => {
+    if (typeof event.data !== 'string' || !event.data.startsWith('{')) return;
+    try {
+      const message = JSON.parse(event.data);
+      if (message !== null && message.t === 'list' && Array.isArray(message.terminals)) {
+        Reflect.set(globalThis, 'receivedTerminals', message.terminals);
+      }
+    } catch {}
+  };
+  // web/connection.js takes messages through \`onmessage\`: wrap what it sets. The accessor is
+  // the native prototype's; helpers/shell.ts's RECORDER may have put a subclass in front of it.
+  let owner = WebSocket.prototype;
+  while (owner !== null && !Object.hasOwn(owner, 'onmessage')) owner = Object.getPrototypeOf(owner);
+  if (owner === null) return;
+  const handler = Object.getOwnPropertyDescriptor(owner, 'onmessage');
+  Object.defineProperty(owner, 'onmessage', {
+    ...handler,
+    set(listener) {
+      handler.set.call(
+        this,
+        typeof listener === 'function'
+          ? function (event) {
+              record(event);
+              return listener.call(this, event);
+            }
+          : listener,
+      );
+    },
+  });
+})();`;
+
+/**
  * helpers/shell.ts's `launched` (a real test server; the page opened with a launch token, as
  * `skydeck window` opens it; connected), with VIEWS among its init scripts from the start, so
  * that the first views the page sends are recorded too.
@@ -128,6 +169,7 @@ async function launchedWithViews(t: TestContext, chromium: Browser): Promise<Lau
   const page = await newPage(t, chromium);
   await page.addInitScript(RECORDER);
   await page.addInitScript(VIEWS);
+  await page.addInitScript(LISTS);
   const problems = problemsOf(page);
   const started = await startTestServer(t);
   const { token } = await controlClient(started.d.platform.net, started.d.files.serverSock).token(
@@ -145,6 +187,34 @@ async function sentViews(page: Page): Promise<Record<string, unknown>[]> {
     () => (Reflect.get(globalThis, 'sentViews') ?? []) as Record<string, unknown>[],
     null,
   );
+}
+
+/**
+ * Waits until the PAGE's own last list holds `count` terminals, each with its session reported (S2
+ * 7.5), so that the page lets a block of them close: its copy of the server's rule (c2) refuses
+ * while a member's terminal has `sessionId` null in its `list.terminals`. The server's hub can be
+ * ahead of the page by a list (at most one a second): waiting on the hub is not enough (F6, L6:
+ * a block that did not close on a slow runner).
+ */
+async function untilPageReported(page: Page, count: number): Promise<void> {
+  const deadline = performance.now() + PAGE_WAIT_MS;
+  for (;;) {
+    const terminals = await readPage(
+      page,
+      () => (Reflect.get(globalThis, 'receivedTerminals') ?? []) as { sessionId: unknown }[],
+      null,
+    );
+    if (
+      terminals.length === count &&
+      terminals.every((term) => typeof term.sessionId === 'string')
+    ) {
+      return;
+    }
+    if (performance.now() > deadline) {
+      assert.fail(`the page's terminals are ${JSON.stringify(terminals)}`);
+    }
+    await sleep(50);
+  }
 }
 
 /** The last `view` the page sent. */
@@ -454,7 +524,7 @@ test('search and stacks in the list', async (t) => {
       session(d, S3, 4n * MIN, 'alpha deploy');
       session(d, S4, 5n * MIN, 'alpha login done');
       markDone(d.deck, S4);
-      await untilRows(page, [S1, S2, S3], 'This week');
+      await untilRows(page, [S1, S2, S3], 'Recent');
       await showsText(page, '#list .list-footer', /^1 done hidden · show$/);
       assert.match(
         (await page.getAttribute('#list .list-filter', 'placeholder')) ?? '',
@@ -496,7 +566,7 @@ test('search and stacks in the list', async (t) => {
       pullRequest(d, S2, 2, 'merged');
       setNote(d.deck, S3, 'only a note');
       setNote(d.deck, S5, 'an old note');
-      await untilRows(page, [S1, S2, S3, S4], 'This week, Earlier folded');
+      await untilRows(page, [S1, S2, S3, S4], 'Recent, Earlier folded');
       assert.deepEqual(await chips(page), [
         ['Running', 'false'],
         ['Open PR', 'false'],
@@ -629,7 +699,7 @@ test('search and stacks in the list', async (t) => {
   );
 
   await t.test(
-    'a block: three sessions of ORB-1 in This week → OPEN by default: the head with ×3, the members indented, no line; ← on the head → closed, the line `+2 more in ORB-1`; ↓ from a closed head skips its members and the line; → on the head → open; ← on a member → the head selected and the block closed; a click on the line → open; ← → on a row in no block fold and unfold Earlier as before; a click on ×3 closes and opens, and with a member selected leaves the block open, the selection where it was and says why',
+    'a block: three sessions of ORB-1 in Recent → OPEN by default: the head with ×3, the members indented, no line; ← on the head → closed, the line `+2 more in ORB-1`; ↓ from a closed head skips its members and the line; → on the head → open; ← on a member → the head selected and the block closed; a click on the line → open; ← → on a row in no block fold and unfold Earlier as before; a click on ×3 closes and opens, and with a member selected leaves the block open, the selection where it was and says why',
     async (t) => {
       const l = await launchedWithViews(t, chromium);
       const { page, d } = l;
@@ -877,10 +947,7 @@ test('search and stacks in the list', async (t) => {
       }
       // Each program has reported its session (S2 7.5), so that a terminal's slot names it: a
       // slot chord reaches a hidden member through its terminal (a named limit before that).
-      await until(
-        () => l.server.hub.list().every((term) => term.sessionId === term.expectedSessionId),
-        'the three programs reported their sessions',
-      );
+      await untilPageReported(page, 3); // the PAGE knows each session (F6, L6)
       const open = await untilLines(
         page,
         (drawn) =>
@@ -974,10 +1041,7 @@ test('search and stacks in the list', async (t) => {
       for (const id of [S1, S2, S3]) {
         await resumeHere(page, id);
       }
-      await until(
-        () => l.server.hub.list().every((term) => term.sessionId === term.expectedSessionId),
-        'the three programs reported their sessions',
-      );
+      await untilPageReported(page, 3); // the PAGE knows each session (F6, L6)
       await untilRows(page, [S1, S2, S3], 'the open block under Open');
       // The member S2's terminal has the keyboard (a click on a running row).
       await page.locator(`#list [data-id="${S2}"]`).click();
@@ -1043,10 +1107,7 @@ test('search and stacks in the list', async (t) => {
       for (const id of [S1, S2]) {
         await resumeHere(page, id);
       }
-      await until(
-        () => l.server.hub.list().every((term) => term.sessionId === term.expectedSessionId),
-        'the two programs reported their sessions',
-      );
+      await untilPageReported(page, 2); // the PAGE knows each session (F6, L6)
       session(d, S3, 1n * MIN, 'week three');
       session(d, S4, 2n * MIN, 'week four');
       setGroup(d.deck, S3, 'test');
@@ -1063,9 +1124,9 @@ test('search and stacks in the list', async (t) => {
       await until(async () => (await shape()) === both(true, true), 'two open blocks');
       assert.equal(await selectedRow(page), S2, "Open's member, from its resume");
 
-      // `×2` on This week's block with Open's member selected: closed, the selection stays.
+      // `×2` on Recent's block with Open's member selected: closed, the selection stays.
       await page.locator(`#list [data-id="${S3}"] .row-stack`).click();
-      await until(async () => (await shape()) === both(true, false), "This week's closed");
+      await until(async () => (await shape()) === both(true, false), "Recent's closed");
       await untilClosed(page, shut('week', 'test'));
       assert.equal(await selectedRow(page), S2, 'the selection stays');
 
@@ -1076,12 +1137,12 @@ test('search and stacks in the list', async (t) => {
       await until(async () => (await shape()) === both(false, false), 'both closed');
       await untilClosed(page, [...shut('week', 'test'), ...shut('open', 'test')]);
 
-      // Opening This week's leaves Open's closed.
+      // Opening Recent's leaves Open's closed.
       await page.locator(`#list .list-more[data-head="${S3}"]`).click();
-      await until(async () => (await shape()) === both(false, true), "This week's open");
+      await until(async () => (await shape()) === both(false, true), "Recent's open");
       await untilClosed(page, shut('open', 'test'));
 
-      // A selection that opens Open's (a slot chord of its hidden member) leaves This week's closed.
+      // A selection that opens Open's (a slot chord of its hidden member) leaves Recent's closed.
       await page.locator(`#list [data-id="${S3}"] .row-stack`).click();
       await until(async () => (await shape()) === both(false, false), 'both closed again');
       await untilClosed(page, [...shut('open', 'test'), ...shut('week', 'test')]);
@@ -1091,7 +1152,7 @@ test('search and stacks in the list', async (t) => {
       await untilClosed(page, shut('week', 'test'));
 
       // A resume into a closed block of Open (CONSIDER c of review 2): Open's closed again, then
-      // This week's head S3 resumed from the list; it joins Open's block, the server selects it
+      // Recent's head S3 resumed from the list; it joins Open's block, the server selects it
       // after the resume, and the block opens.
       await page.locator(`#list [data-id="${S1}"]`).click();
       await untilSelected(page, S1);
@@ -1211,6 +1272,239 @@ test('search and stacks in the list', async (t) => {
   );
 
   await t.test(
+    "a block an unreported terminal holds open says which (F6, L1): `still starting` while that terminal may still start (`reconnecting` too), the ended line once it ended at its start, on ← and on `×n`; the starting line when both kinds hold it, in either order; the selected member's line before both; the guard lets go once the ended terminal is closed; an unreported HEAD alone holds nothing (L2)",
+    async (t) => {
+      // A scripted server that applies the server's own rules to the rows of `test` under one
+      // section: `stackRows` for the blocks, and `rowPayload`'s `starting` (an unreported terminal
+      // that may still start: the row is `starting…`). S1 in TERM_A, S2 in TERM_B, S3 in TERM_C,
+      // each present or not, reported or not, in any state. (The real server lists an ended,
+      // unreported row in Recent or Earlier and a starting one under Open, so one block never holds
+      // both kinds; the page's rule does not depend on the section, and this case holds that the
+      // starting line wins, whichever row comes first.)
+      type Term = { id: string; slot: number; sessionId: string | null; state: string };
+      let terms: Term[] = [
+        { id: TERM_A, slot: 1, sessionId: S1, state: 'running' },
+        { id: TERM_B, slot: 2, sessionId: S2, state: 'running' },
+      ];
+      let ids = [S1, S2];
+      let world: Awaited<ReturnType<typeof editWorld>> | null = null;
+      const termFor: Record<string, string> = { [S1]: TERM_A, [S2]: TERM_B, [S3]: TERM_C };
+      const blockList = (selected: string | null): Record<string, unknown> => {
+        const rows = ids.map((id) => {
+          const term = terms.find((one) => one.id === termFor[id]) ?? null;
+          return {
+            id,
+            terminal: term?.id ?? null,
+            slot: term?.slot ?? null,
+            title: id.slice(0, 4),
+          };
+        });
+        const base = scriptedList(rows, terms) as {
+          sections: { rows: Record<string, unknown>[] }[];
+          terminals: Record<string, unknown>[];
+        } & Record<string, unknown>;
+        const views = (world?.sent ?? []).filter((message) => message['t'] === 'view');
+        const closed = (views.at(-1)?.['closed'] ?? []) as ClosedBlock[];
+        const drawn = stackRows(
+          (base.sections[0]?.rows ?? []).map((row) => {
+            const term = terms.find((one) => one.id === row['terminal']);
+            const starting =
+              term !== undefined &&
+              term.sessionId === null &&
+              SERVER_MAY_START.has(term.state as TerminalState);
+            const runs =
+              term !== undefined &&
+              term.sessionId !== null &&
+              SERVER_MAY_START.has(term.state as TerminalState);
+            return {
+              id: row['id'] as string,
+              group: 'test',
+              needsYou: false,
+              unreported: term !== undefined && term.sessionId === null,
+              row: { ...row, group: 'test', starting, state: runs ? 'running' : 'not-running' },
+            };
+          }),
+          'open',
+          closed,
+          selected,
+        ).map(({ entry, stack }) => ({ ...entry.row, stack }));
+        return {
+          ...base,
+          terminals: base.terminals.map((term) => ({
+            ...term,
+            state: terms.find((one) => one.id === term['id'])?.state ?? 'running',
+          })),
+          sections: [{ ...base.sections[0], count: ids.length, rows: drawn }],
+        };
+      };
+      const page = await newPage(t, chromium);
+      await page.addInitScript(RECORDER);
+      await page.addInitScript(VIEWS);
+      const problems = problemsOf(page);
+      world = await editWorld(t, page, blockList);
+      const w = world;
+      /** Sets the terminals (and the rows), sends the list, and waits until `fact` holds of it. */
+      const step = async (
+        next: Term[],
+        nextIds: string[],
+        fact: () => Promise<boolean>,
+        what: string,
+      ): Promise<void> => {
+        terms = next;
+        ids = nextIds;
+        w.list(blockList);
+        await until(fact, what);
+      };
+      /** A row's state line ('' when none, null when the row is not drawn). */
+      const stateOf = async (id: string): Promise<string | null> =>
+        readPage(
+          page,
+          (id) => {
+            const row = document.querySelector(`#list [data-id="${id}"]`);
+            if (row === null) return null;
+            const line = row.querySelector('.row-state');
+            return line instanceof HTMLElement && line.checkVisibility()
+              ? (line.textContent ?? '')
+              : '';
+          },
+          id,
+        );
+      const term = (id: string, slot: number, sessionId: string | null, state: string): Term => ({
+        id,
+        slot,
+        sessionId,
+        state,
+      });
+      const STARTING = /^this block holds a session that is still starting; it stays open$/;
+      const ENDED = /^this block holds a terminal that ended at its start; close it first$/;
+      const SELECTED = /^this block holds the selected session; it stays open$/;
+      const clearKeyBar = async (): Promise<void> => {
+        await page.evaluate(() => {
+          const message = document.getElementById('key-message');
+          if (message !== null) message.textContent = '';
+        });
+      };
+      /** ← on the selected head, then a click on its `×n`: each says `line`, nothing is sent. */
+      const refusesBoth = async (line: RegExp, what: string): Promise<void> => {
+        const views = (await sentViews(page)).length;
+        await clearKeyBar();
+        await page.keyboard.press('ArrowLeft');
+        await showsText(page, '#key-message', line);
+        await clearKeyBar();
+        await page.locator(`#list [data-id="${S1}"] .row-stack`).click();
+        await showsText(page, '#key-message', line);
+        assert.equal((await sentViews(page)).length, views, `${what}: no view`);
+        assert.equal(await selectedRow(page), S1, `${what}: the head stays selected`);
+      };
+      const rowsAre = (want: string[]) => async (): Promise<boolean> =>
+        (await rowIds(page)).join() === want.join();
+      await untilRows(page, [S1, S2], 'the open block');
+      await toZone(page, 'list');
+      assert.equal(await selectedRow(page), S1);
+      await page.keyboard.press('ArrowLeft');
+      await untilClosed(page, shut('open', 'test'));
+      await untilRows(page, [S1], 'closed');
+
+      // S2's terminal ended at its start: the block is drawn open, and ← and ×2 say the ended line.
+      await step(
+        [term(TERM_A, 1, S1, 'running'), term(TERM_B, 2, null, 'ended')],
+        [S1, S2],
+        rowsAre([S1, S2]),
+        'open for the ended, unreported terminal',
+      );
+      await untilClosed(page, []);
+      await refusesBoth(ENDED, 'ended');
+
+      // S2's terminal reconnecting, unreported: it may still start — the starting line.
+      await step(
+        [term(TERM_A, 1, S1, 'running'), term(TERM_B, 2, null, 'reconnecting')],
+        [S1, S2],
+        async () => (await stateOf(S2)) === 'starting…',
+        'S2 starting again',
+      );
+      await refusesBoth(STARTING, 'reconnecting');
+
+      // Both kinds, in both orders: the starting line.
+      await step(
+        [
+          term(TERM_A, 1, S1, 'running'),
+          term(TERM_B, 2, null, 'starting'),
+          term(TERM_C, 3, null, 'ended'),
+        ],
+        [S1, S2, S3],
+        async () => (await rowsAre([S1, S2, S3])()) && (await stateOf(S3)) === '',
+        'S2 starting, S3 ended',
+      );
+      await refusesBoth(STARTING, 'starting, then ended');
+      await step(
+        [
+          term(TERM_A, 1, S1, 'running'),
+          term(TERM_B, 2, null, 'ended'),
+          term(TERM_C, 3, null, 'starting'),
+        ],
+        [S1, S2, S3],
+        async () => (await stateOf(S2)) === '' && (await stateOf(S3)) === 'starting…',
+        'S2 ended, S3 starting',
+      );
+      await refusesBoth(STARTING, 'ended, then starting');
+
+      // A member selected as well: on `×n` the selected member's line comes first.
+      await page.locator(`#list [data-id="${S2}"]`).click();
+      await untilSelected(page, S2);
+      await clearKeyBar();
+      await page.locator(`#list [data-id="${S1}"] .row-stack`).click();
+      await showsText(page, '#key-message', SELECTED);
+      assert.equal(await selectedRow(page), S2);
+      await page.locator(`#list [data-id="${S1}"]`).click();
+      await untilSelected(page, S1);
+      await toZone(page, 'list');
+
+      // S3 leaves; the ended terminal is closed (S2 keeps its row, without a terminal): ← closes.
+      await step(
+        [term(TERM_A, 1, S1, 'running')],
+        [S1, S2],
+        async () => {
+          const s2 = await readPage(
+            page,
+            (id) =>
+              document.querySelector(`#list [data-id="${id}"] .row-slot`)?.textContent ?? null,
+            S2,
+          );
+          return (await rowsAre([S1, S2])()) && s2 === '';
+        },
+        'S3 gone, S2 without a terminal',
+      );
+      await clearKeyBar();
+      await page.keyboard.press('ArrowLeft');
+      await untilClosed(page, shut('open', 'test'));
+      await untilRows(page, [S1], 'closed: the guard let go');
+
+      // L2: only the HEAD's terminal unreported holds nothing open: ← closes, and so does ×2.
+      await page.keyboard.press('ArrowRight');
+      await untilClosed(page, []);
+      await untilRows(page, [S1, S2], 'open');
+      await step(
+        [term(TERM_A, 1, null, 'starting')],
+        [S1, S2],
+        async () => (await stateOf(S1)) === 'starting…',
+        'the head starting, unreported',
+      );
+      await page.keyboard.press('ArrowLeft');
+      await untilClosed(page, shut('open', 'test'));
+      await untilRows(page, [S1], '← closes it');
+      await page.keyboard.press('ArrowRight');
+      await untilClosed(page, []);
+      await untilRows(page, [S1, S2], 'open again');
+      assert.equal(await stateOf(S1), 'starting…', 'the head is still unreported');
+      await page.locator(`#list [data-id="${S1}"] .row-stack`).click();
+      await untilClosed(page, shut('open', 'test'));
+      await untilRows(page, [S1], '×2 closes it');
+      assert.equal(await shownText(page, '#key-message'), '', 'nothing refused');
+      assert.deepEqual(problems, []);
+    },
+  );
+
+  await t.test(
     'a closed block whose hidden member needs you: `+2 more in test · 1 needs you`, that part alone in the needs-you colour, no bar and no bold; the title bar the same open or closed; Ctrl+Shift+J selects the hidden member and opens its block',
     async (t) => {
       const l = await launchedWithViews(t, chromium);
@@ -1223,10 +1517,7 @@ test('search and stacks in the list', async (t) => {
         await resumeHere(page, id);
       }
       // Each program has reported its session: until then its block cannot be closed.
-      await until(
-        () => l.server.hub.list().every((term) => term.sessionId === term.expectedSessionId),
-        'the three programs reported their sessions',
-      );
+      await untilPageReported(page, 3); // the PAGE knows each session (F6, L6)
       await untilRows(page, [S1, S2, S3], 'the open block under Open');
       // S3 asks a question: it needs you, while S1 is selected.
       await page.locator(`#list [data-id="${S1}"]`).click();
@@ -1297,6 +1588,21 @@ test('search and stacks in the list', async (t) => {
       assert.equal(look.textColour, look.lineColour);
       assert.deepEqual(look.weights, ['400', '400', '400'], 'no bold');
       assert.deepEqual(look.bar, ['0px', 'none'], 'no bar');
+      // The space before `·` is drawn (F6, L2): the dot stands clear of the group's text.
+      const gap = await readPage(
+        page,
+        () => {
+          const text = document.querySelector('#list .list-more .more-text');
+          const need = document.querySelector('#list .list-more .more-need')?.firstChild;
+          if (text == null || need == null || need.textContent?.[1] !== '·') return null;
+          const dot = document.createRange();
+          dot.setStart(need, 1);
+          dot.setEnd(need, 2);
+          return dot.getBoundingClientRect().left - text.getBoundingClientRect().right;
+        },
+        null,
+      );
+      assert.ok(gap !== null && gap >= 2, `the gap before the dot is drawn (${gap} px)`);
       assert.equal(await counts(), countsOpen, 'the title bar does not move');
       assert.equal(await page.title(), titleOpen);
 
@@ -1525,7 +1831,7 @@ test('search and stacks in the list', async (t) => {
       session(d, S4, 20n * DAY, 'old work');
       session(d, S5, 4n * MIN, 'done work');
       markDone(d.deck, S5);
-      await untilRows(page, [S1, S2, S3], 'This week: an open block and a row');
+      await untilRows(page, [S1, S2, S3], 'Recent: an open block and a row');
 
       await toZone(page, 'list');
       await page.keyboard.press('/');

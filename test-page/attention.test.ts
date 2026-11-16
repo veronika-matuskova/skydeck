@@ -766,7 +766,11 @@ test('attention in the page', async (t) => {
       // beta: not running, hidden by the filter, no window terminal — nothing is selected.
       await clearKeyMessage(w.page);
       await clickNotification(w.page, 0);
-      await showsText(w.page, '#key-message', /^that session is hidden by the filter or the fold$/);
+      await showsText(
+        w.page,
+        '#key-message',
+        /^that session is hidden by the filter, the fold or a closed block$/,
+      );
       assert.equal((await notificationsOf(w.page)).focused, 1, 'the window to the front');
       assert.equal(await selectedRow(w.page), S1, 'the selection stays');
       assert.equal(
@@ -798,7 +802,7 @@ test('attention in the page', async (t) => {
     'a click on the notification of a session a closed block hides and no terminal of the window names — one that runs elsewhere and asks, one not running that ended unexpectedly, its terminal closed — selects it and its block opens (F3, G5); an id the list neither draws nor holds in `needYou.order` is still refused',
     async (t) => {
       // Open: S1 in the window (slot 1), the head of a block of `test`; S2 runs elsewhere and asks,
-      // its member. This week: S4, the head of a block of `orb`; S3 ended unexpectedly (its window
+      // its member. Recent: S4, the head of a block of `orb`; S3 ended unexpectedly (its window
       // terminal was closed), its member. While a block is closed (and its member not selected)
       // the list carries its head only, with `+1 more in … · 1 needs you`; `needYou.order` holds
       // both members (G5). A session the list does not show for another reason is in neither.
@@ -886,7 +890,11 @@ test('attention in the page', async (t) => {
       // An id the list neither draws nor holds in `needYou.order`, with no terminal: refused.
       const from = w.sent.length;
       await clickNotification(w.page, 2);
-      await showsText(w.page, '#key-message', /^that session is hidden by the filter or the fold$/);
+      await showsText(
+        w.page,
+        '#key-message',
+        /^that session is hidden by the filter, the fold or a closed block$/,
+      );
       assert.equal(await selectedRow(w.page), S3, 'the selection stays');
       assert.equal(sentWith(w.sent.slice(from), 'view', OUT), false, 'no view selects it');
       assert.deepEqual(w.problems, []);

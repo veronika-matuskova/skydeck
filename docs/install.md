@@ -662,9 +662,9 @@ effect.
 ### Using the window
 
 - **The list**, on the left, has three sections: **Open** (running or starting, in the window or in
-  another terminal; the window's terminals carry the slots 1–9), **This week** and **Earlier**
-  (folded; a click on its header unfolds it). Done sessions are hidden: the footer's `show`, or
-  `a`, shows them.
+  another terminal; the window's terminals carry the slots 1–9), **Recent** (not running, last
+  active in the last 7 days) and **Earlier** (folded; a click on its header unfolds it). Done
+  sessions are hidden: the footer's `show`, or `a`, shows them.
 - **A session that is not running**: one click selects it and shows its resume card, with the
   exact command it will run. Enter, a double click or `Resume here` resumes it into the window.
 - **A running session** of the window: a click shows its terminal. A session that runs in another
@@ -919,8 +919,11 @@ one, and the page closes a session's notification once that session no longer ne
 on one brings the window to the front and selects the session. While a dialog is open it only
 brings the window to the front, and the key bar says `close the edit first (Esc)`. A session the
 list does not show (the filter, the folded Earlier) and that has no terminal in the window is not
-selected: the key bar says `that session is hidden by the filter or the fold`. A session that a
-closed block hides is selected, terminal or not, and its block opens. Whether a
+selected: the key bar says `that session is hidden by the filter, the fold or a closed block`. A
+session that a closed block hides is selected, terminal or not, and its block opens — but not one
+that no longer needs you, has no terminal in the window and sits in a closed block (the window
+cannot know a closed block's sessions): that click is refused with the same line; open the block
+to see it. Whether a
 notification pops up is also Windows' own business (its Do not disturb, its settings for Edge),
 which skydeck does not touch.
 
@@ -1114,20 +1117,21 @@ clicked again, the page reloads, or the switcher (below) clears it to show a ses
 The chips are buttons: Tab from the field reaches them, Enter or Space presses the one that has
 the keyboard, and while one has it no list key acts.
 
-**Blocks.** In every section — Open, This week and Earlier —, each on its own, the sessions of one
+**Blocks.** In every section — Open, Recent and Earlier —, each on its own, the sessions of one
 group sit together as a block when there are at least two: under Open only running ones, under
-This week only this week's, so a group with sessions in two sections is two blocks. Every session
-of the group is in its block, one that has a terminal of the window and one that needs you too. A
-block sits where its first session sits in the section's order (under Open: by slot), and the
-others follow it in that order, indented, so the slot numbers under Open can run `1 3 2`. That
-first session is the block's head: it shows `×4` after its ticket key (or its group). A block is
-open until you close it. Closed, it shows only its head and the line `+3 more in ORB-2107`, which
-is no row: it is never selected, and ↑ ↓ pass over it and the sessions it hides. When sessions it
-hides need you the line says so, `+3 more in ORB-2107 · 1 needs you`, that part in the colour of
-the title bar's `need you` count; the head's own mark is on its row, and the title bar counts the
-same whether a block is open or closed. A group is its exact text: `ORB-1` and `orb-1` are two. A
-session whose group no other session of its section has, or that has no group, is listed as
-before. A section's count counts every session in it, those of a closed block too.
+Recent only recent ones (not running, last active in the last 7 days), so a group with sessions
+in two sections is two blocks. Every session of the group is in its block, one that has a
+terminal of the window and one that needs you too. A block sits where its first session sits in
+the section's order (under Open: by slot), and the others follow it in that order, indented, so
+the slot numbers under Open can run `1 3 2`. That first session is the block's head: it shows
+`×4` after its ticket key (or its group). A block is open until you close it. Closed, it shows
+only its head and the line `+3 more in ORB-2107`, which is no row: it is never selected, and ↑
+↓ pass over it and the sessions it hides. When sessions it hides need you the line says so, `+3
+more in ORB-2107 · 1 needs you`, that part in the colour of the title bar's `need you` count;
+the head's own mark is on its row, and the title bar counts the same whether a block is open or
+closed. A group is its exact text: `ORB-1` and `orb-1` are two. A session whose group no other
+session of its section has, or that has no group, is listed as before. A section's count counts
+every session in it, those of a closed block too.
 
 - A click on `×4` closes or opens the block, and a click on the `+3 more` line opens it. A click
   selects nothing and leaves the keyboard where it was. While a session of the block other than
@@ -1140,11 +1144,15 @@ before. A section's count counts every session in it, those of a closed block to
   open head or on another session of a block.
 - A block you closed stays closed until you open it or reload the page, also when its sessions
   leave and the block forms again later.
-- A closed block opens by itself while one of its sessions has a terminal of the window whose
-  program has not reported its session yet (a start, or a program that ended before it reported,
-  until you close its terminal), so that its row and its slot number show and its slot chord
-  reaches it; it then stays open. While such a start holds it open, ← and a click on `×n` do
-  nothing, and the key bar says `this block holds a session that is still starting; it stays open`.
+- A closed block opens by itself while one of its sessions other than its head has a terminal of
+  the window whose program has not reported its session yet (a start, or a program that ended
+  before it reported, until you close its terminal), so that its row and its slot number show and
+  its slot chord reaches it; it then stays open. While such a session holds it open, ← and a click
+  on `×n` do nothing, and the key bar says why: `this block holds a session that is still
+  starting; it stays open` while its terminal may still start (wait, and the block can be closed
+  once the session is known), or `this block holds a terminal that ended at its start; close it
+  first` when its program ended before its session was known (select that session and press
+  Close on its ended bar).
 - Whatever selects a session that a closed block hides opens the block, and it stays open when
   the selection leaves, until you close it again: Ctrl+Shift+1–9 on its slot, Ctrl+Shift+J when it
   needs you, a click on its notification, a pick in the switcher, a resume that brings it, or a
@@ -1159,7 +1167,7 @@ before. A section's count counts every session in it, those of a closed block to
   With done sessions shown the session stays listed, still the head, and stays selected.
 - While filtering, every session stands alone.
 
-(Until 2026-11-16 only This week and Earlier stacked, closed by default, and running sessions
+(Until 2026-11-16 only Recent and Earlier stacked, closed by default, and running sessions
 never did; the owner asked for blocks in every section, open by default.)
 
 Each window has its own filter, chips, closed blocks, folded Earlier and done shown. A reload (F5)

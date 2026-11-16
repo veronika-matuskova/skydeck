@@ -1156,13 +1156,13 @@ instead of opening its dialog; type nothing then, and press the key again.
    the row stays under Open with a `done` mark, and stays selected. Click `Undo` within 5
    seconds: the mark goes.
 8. End the throwaway session: Ctrl+Shift+L to its terminal, look at the short id (`/exit` ends
-   the session it is typed into), `/exit`, then `Close` on its ended bar. Its row moves to This
-   week. Click it (it no longer runs, so the list gets the keyboard: the key bar says `Focus:
+   the session it is typed into), `/exit`, then `Close` on its ended bar. Its row moves to
+   Recent. Click it (it no longer runs, so the list gets the keyboard: the key bar says `Focus:
    list`; look at the short id) and press `d`. Expected: the row disappears, the toast says
    `Marked done: hidden from the list. It comes back on new activity.`, and the row after it in
-   This week is selected (the one before it when it was the last; none when it was alone) —
+   Recent is selected (the one before it when it was the last; none when it was alone) —
    another session: **click `Undo` now, before any key**. Expected: the throwaway session is back
-   in This week and selected again. (When the toast went before you clicked: `a` shows the done
+   in Recent and selected again. (When the toast went before you clicked: `a` shows the done
    sessions; click the throwaway session's row, look at its short id, press `d`, then `a` again.)
 9. Clear what this check set, with the throwaway session selected (look at the short id) and the
    key bar saying `Focus: list` (Ctrl+Shift+L until it does), each key only once its dialog is
@@ -1629,7 +1629,7 @@ chip on. Write down how many sessions the title bar counts.
    done sessions show with their `done` mark and the footer says `done sessions shown · hide`;
    click it again, and the footer is `<n> done hidden · show` again (or gone when none is done).
 4. **A block.** Blocks are open by default: a head with `×<n>` after its key, its other sessions
-   indented under it, and no line `+… more in <group>` after it. Look in This week, and in
+   indented under it, and no line `+… more in <group>` after it. Look in Recent, and in
    Earlier, for an open one. When Earlier is folded (none of its rows shows), a click on its header
    unfolds it; when its rows show, do not click its header (that click folds it). Take an open
    block none of whose rows has a coloured bar at its left (a session that needs you). Skip a
@@ -1642,7 +1642,12 @@ chip on. Write down how many sessions the title bar counts.
    this step out if it does not. That is a real session: from here to the end of this step press
    only ← and →, never Enter (Enter would resume it), and press ← only while you see that the
    selected row is that head with its sessions indented under it (the block open); when it is
-   not, press nothing more and write down what you see. Press ←. Expected: the block closes — its
+   not, press nothing more and write down what you see. When ← (or, later, a click on `×<n>`)
+   does nothing and the key bar says why — a line that begins `this block holds` —, write that
+   line down: it shows for about five seconds, and pressing ← once more shows it again (the block
+   stays as it is). Then press nothing more in this step (no →: on the still open head it would
+   unfold Earlier), and take another open block from its first click on, or go on with step 5. Press ←.
+   Expected: the block closes — its
    indented sessions are gone, the line `+<n−1> more in <group>` follows the head, and the head
    stays selected. Press →. Expected: it opens again, its sessions indented under the head, the
    line gone, the head still selected. Look again that the head is selected with its sessions

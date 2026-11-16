@@ -636,11 +636,27 @@ describe('sectionText (S2 12.1)', () => {
   test('the three names, each with its count', () => {
     assert.deepEqual(sectionText(section({ name: 'open', count: 3 }), now), {
       title: 'Open',
+      tip: '',
       count: '3',
       span: '',
     });
-    assert.equal(sectionText(section({ name: 'week', count: 1 }), now).title, 'This week');
+    assert.equal(sectionText(section({ name: 'week', count: 1 }), now).title, 'Recent');
     assert.equal(sectionText(section({ name: 'earlier', count: 1 }), now).title, 'Earlier');
+  });
+
+  test('the key `week` is titled Recent, and only its header carries the tooltip with the exact meaning (F5)', () => {
+    assert.deepEqual(sectionText(section({ name: 'week', count: 12 }), now), {
+      title: 'Recent',
+      tip: 'last active in the last 7 days',
+      count: '12',
+      span: '',
+    });
+    assert.equal(sectionText(section({ name: 'open', count: 1 }), now).tip, '');
+    assert.equal(sectionText(section({ name: 'earlier', count: 1 }), now).tip, '');
+    // The title is not a key: a name the page does not know is drawn as sent, with no tooltip.
+    const unknown = sectionText(section({ name: 'Recent' as 'week', count: 1 }), now);
+    assert.equal(unknown.title, 'Recent');
+    assert.equal(unknown.tip, '');
   });
 
   test('Earlier folded: its count and the time span of its rows', () => {
@@ -654,7 +670,7 @@ describe('sectionText (S2 12.1)', () => {
       }),
       now,
     );
-    assert.deepEqual(text, { title: 'Earlier', count: '12', span: '8d–41d ago' });
+    assert.deepEqual(text, { title: 'Earlier', tip: '', count: '12', span: '8d–41d ago' });
   });
 
   test('a span of one age, and no span when unfolded or without times', () => {
