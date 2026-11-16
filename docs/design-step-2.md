@@ -2179,12 +2179,22 @@ too. A block sits where its first row sits in the section's order (12.1), its ot
 after it in that order; that first row is its head. A row whose group no other row of its section
 has, and a row without a group, are drawn as before; while a filter or a chip is set (12.8) no
 block is formed. A block is open unless the page's view names its section and group in `closed`
-(8.2.3): the page remembers the blocks the user closed, per window, until a reload. A closed block
-is open while the selected session is one of its members other than the head, and the page then
-forgets that it was closed, so that it stays open when the selection leaves (ruled): whatever
-selects a hidden member — a click, a slot chord, Ctrl+Shift+J, Ctrl+Tab, a notification's click,
-a pick in the switcher, the server's own selection after a resume (12.9, 12.8) — opens its block,
-so the selection is never on a row hidden in a block. A closed block never hides that a session
+(8.2.3): the page remembers the blocks the user closed, per window, until a reload; a block the
+user closed stays closed until it is opened or the page reloads, also when its rows leave and a
+block of that section and group forms again later (ruled on 2026-11-16, review 2 of follow-up F3).
+A closed block is open while the selected session is one of its members other than the head, and
+the page then forgets that it was closed, so that it stays open when the selection leaves (ruled):
+whatever selects a hidden member — a click, a slot chord, Ctrl+Shift+J, Ctrl+Tab, a notification's
+click, a pick in the switcher, the server's own selection after a resume (12.9, 12.8) — opens its
+block, so the selection is never on a row hidden in a block. A closed block is open too while one of
+its members other than the head is drawn with a terminal of the window that has not reported a
+session (7.5: a start not yet reported, which may stay so, or a program that ended before it
+reported, until its terminal is closed), so that such a row and its slot are on screen and its slot
+chord reaches it; the page forgets that it was closed, as for a selection, and while the start
+holds the block open ← and a click on `×4` do nothing and the key bar says `this block holds a
+session that is still starting; it stays open` (ruled on 2026-11-16). The page's rule is a copy of
+the server's (`build.ts` and `web/list.js` each say so): a terminal's `sessionId` null in
+`list.terminals` for the terminal a member's row is drawn with. A closed block never hides that a session
 needs you: its line says how many of the members it hides need you (below), Ctrl+Shift+J reaches
 them (`needYou.order` holds them, 8.2.3), and the title bar's counts (12.1) are the same whether a
 block is open or closed. A section's count and time span are all its rows', a closed block's
@@ -2208,7 +2218,10 @@ from the terminal zone); ← in the list on a member still selects the head and 
 The keys are 12.9's. The page sends `closed` in every view (`[]` at least), at most 64 entries, the oldest dropped (that
 block opens again); a group the server would refuse — not well formed, or over 1,024 bytes
 (8.2.3) — is never sent, so its block cannot be closed: ← and `×4` do nothing on it, and it stays
-open (a named limit). `d` on a closed block's head marks that session only: the next member
+open (a named limit). Another named limit (review 2 of follow-up F3, left as it is): the group
+before a head's title is not shortened, so a group of about 46 characters or more pushes `×4`
+past the list's edge, where it cannot be clicked; ← and →, and a click on the `+3 more` line, still
+close and open the block, and the line's ` · 1 needs you` always shows (its group gives way). `d` on a closed block's head marks that session only: the next member
 becomes the head (or the last one stands alone), and stage D's selection after `d` (12.9) takes
 the row after it of those the list drew when `d` was pressed — for a closed block's head, the row
 after the block, whose members were not drawn (ruled). While filtering every row stands alone
@@ -2707,16 +2720,13 @@ plan task 27). Folding Earlier (← or a click on its header) with the selection
 selects the row above it; while a filter is set nothing folds. On a block (12.2; stage E, plan
 E7 as ruled on 2026-11-16), ← on an open head closes it, ← on a member selects the head and closes
 the block, as folding Earlier first selects the row above it (in the list zone, where the user sees
-the selection move; a click on `×n` never moves it, 12.2), and → on a closed head opens it; on
+the selection move; a click on `×n` never moves it, 12.2) — except on a block that a member's
+unreported terminal holds open, where ← does nothing and says so (12.2) —, and → on a closed head
+opens it; on
 any other row — and ← on a closed head, → on an open head or on a member — ← and → fold and unfold
 Earlier. Ctrl+Shift+1–9 select the session of that slot also while a closed block hides it, and
-its block opens (12.2). A named limit (ruled on 2026-11-16): until a terminal's program has
-reported its session (7.5), usually a few seconds after it starts, its slot names no session, so
-for a session a closed block hides the slot chord says `no session in slot 3` and does nothing
-else, as it does for one a filter hides. It can show only for a session started into a block that
-is already closed in this window (a restore, or a start from the command line; a resume or a new
-session from the page selects its session, which opens the block), or for a block closed in a
-session's first seconds; once the session is reported the chord selects it and opens its block. Ctrl+Tab skips a member of a closed block
+its block opens (12.2); a member whose terminal has not reported a session is never hidden (its
+block is drawn open, 12.2), so its slot chord finds its row as any drawn row's. Ctrl+Tab skips a member of a closed block
 that no terminal of the window holds (the page never knows a closed block's members), as it skips
 a row a filter or a folded Earlier hides; a member that a terminal of the window holds it selects,
 and its block opens, as for every other selection of a hidden member (ruled on 2026-11-16). While

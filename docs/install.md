@@ -1129,6 +1129,13 @@ before. A section's count counts every session in it, those of a closed block to
   another session it selects the head first), → on a closed head opens it. Otherwise ← and → fold
   and unfold Earlier as before: on a session in no block, and also ← on a closed head and → on an
   open head or on another session of a block.
+- A block you closed stays closed until you open it or reload the page, also when its sessions
+  leave and the block forms again later.
+- A closed block opens by itself while one of its sessions has a terminal of the window whose
+  program has not reported its session yet (a start, or a program that ended before it reported,
+  until you close its terminal), so that its row and its slot number show and its slot chord
+  reaches it; it then stays open. While such a start holds it open, ← and a click on `×n` do
+  nothing, and the key bar says `this block holds a session that is still starting; it stays open`.
 - Whatever selects a session that a closed block hides opens the block, and it stays open when
   the selection leaves, until you close it again: Ctrl+Shift+1–9 on its slot, Ctrl+Shift+J when it
   needs you, a click on its notification, a pick in the switcher, a resume that brings it, or a
@@ -1409,14 +1416,10 @@ manifest names no start address).
 - **Blocks the window cannot close.** A block whose group is over 1,024 bytes (of UTF-8) cannot
   be closed: ← and its `×n` do nothing on it, and it stays open. A window remembers at most 64
   closed blocks: closing another opens the one closed first again.
-- **A slot chord right after a start.** Until the program of a terminal has reported its session
-  (usually a few seconds after it starts), a slot chord of a session that a closed block hides says
-  `no session in slot 3` and does nothing else, as it does for one the filter hides. You can meet
-  it only for a session started into a block you had already closed in this window (by a restore,
-  or with `--window` from a terminal; a resume or a new session from the window selects its
-  session, which opens the block), or for a block you closed in a session's first seconds. Once
-  the session is reported the chord selects it and opens its block: press it again a moment
-  later, or open the block.
+- **A long group's `×n`.** The group before a head's title is not shortened, so with a group of
+  about 46 characters or more the head's `×n` lies past the list's edge, where it cannot be
+  clicked. ← and → in the list, and a click on the `+n more` line, still close and open the block;
+  the line's ` · 1 needs you` always shows (the group is what gets shortened there).
 - **The automatic pull-request refresh** (design.md 7.3) follows the sessions the list's
   sections show, and a selected session the list does not show while a terminal of the window
   holds it (its header shows its pull requests). So the sessions a closed block hides — under
