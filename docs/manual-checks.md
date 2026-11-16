@@ -1629,10 +1629,13 @@ chip on. Write down how many sessions the title bar counts.
    done sessions show with their `done` mark and the footer says `done sessions shown · hide`;
    click it again, and the footer is `<n> done hidden · show` again (or gone when none is done).
 4. **A block.** Blocks are open by default: a head with `×<n>` after its key, its other sessions
-   indented under it. Look in This week, and in Earlier, for one. When Earlier is folded (none of
-   its rows shows), a click on its header unfolds it; when its rows show, do not click its header
-   (that click folds it). Take a block none of whose rows has a coloured bar at its left (a
-   session that needs you); when there is none, write that down and go on with step 5. Click that
+   indented under it. Look in This week, and in Earlier, for an OPEN one: its other sessions
+   indented under the head, and no line `+… more in <group>` after it. Skip a closed one (a head
+   followed by that line): ← on a closed head folds Earlier, which with the selection inside it
+   selects the row above, a real session. When Earlier is folded (none of its rows shows), a click
+   on its header unfolds it; when its rows show, do not click its header (that click folds it).
+   Take an open block none of whose rows has a coloured bar at its left (a session that needs
+   you); when there is none, write that down and go on with step 5. Click that
    block's head once, on its title (the row with `×<n>`). Expected: the head is selected. Then
    look at the key bar: it must say `Focus: list`. When it says `Focus: terminal` (the head has a
    terminal in the window), press Ctrl+Shift+L once and look again; until it says `Focus: list`
