@@ -62,6 +62,8 @@ const SEARCH_CHIPS = /** @type {const} */ (['running', 'open-pr', 'note']);
 const MAX_CLOSED = 64;
 /** Ruled 2026-11-16 (review 2 of F3): what a click on `×n` that would move the selection says. */
 const HOLDS_SELECTED = 'this block holds the selected session; it stays open';
+/** Ruled 2026-11-16 (review 2 of F3): what ← and `×n` say on a block a start holds open. */
+const HOLDS_STARTING = 'this block holds a session that is still starting; it stays open';
 /** S2 8.2.3: a text of a view is at most 1,024 bytes of UTF-8 and well formed. */
 const TEXT_BYTES = 1024;
 const utf8 = new TextEncoder();
@@ -556,6 +558,10 @@ export function createList(root, hooks) {
       hooks.say?.(HOLDS_SELECTED);
       return;
     }
+    if (holdsStart(place.section, stack.group)) {
+      hooks.say?.(HOLDS_STARTING); // the server keeps it open: nothing moves
+      return;
+    }
     closeBlock(place.section, stack.group);
   };
 
@@ -586,6 +592,35 @@ export function createList(root, hooks) {
     }
     return line;
   };
+
+  /**
+   * Whether `row` is drawn with a terminal of the window that has not reported a session (its
+   * `sessionId` is null in the list's `terminals`, S2 7.5): a start, or a program that ended before
+   * it reported. A COPY OF THE SERVER'S RULE (`src/window/view/build.ts`, `stacked`'s
+   * `unreported`; ruled 2026-11-16): the server draws a closed block open while one of its members
+   * is such a row, and this page forgets that it closed it (render) and refuses to close it
+   * (`holdsStart`). A change of one is a change of the other.
+   * @param {RowPayload} row
+   */
+  const unreported = (row) =>
+    row.terminal !== null &&
+    current?.terminals.find((candidate) => candidate.id === row.terminal)?.sessionId === null;
+
+  /**
+   * Whether the drawn block of `group` in `section` holds a member that `unreported` names: the
+   * server keeps it open, so ← and `×n` say so and do nothing.
+   * @param {SectionPayload['name']} section
+   * @param {string} group
+   */
+  const holdsStart = (section, group) =>
+    (current?.sections.find((candidate) => candidate.name === section)?.rows ?? []).some(
+      (row) =>
+        row.stack !== null &&
+        row.stack !== undefined &&
+        row.stack.role === 'member' &&
+        row.stack.group === group &&
+        unreported(row),
+    );
 
   /** The server's time now: the list's, counted on by the time since it came (`serverNow`). */
   const nowNs = () =>
@@ -784,11 +819,20 @@ export function createList(root, hooks) {
     // G5 (ruled 2026-11-16): a closed block that the selection opened — a member of it is
     // selected, however it got there (a slot chord, Ctrl+Shift+J, Ctrl+Tab, a notification, the
     // switcher, a resume's answer) — is forgotten as closed, so that it stays open once the
-    // selection leaves, until the user closes it again.
-    const place = placeOf(selectedId);
-    const stack = place?.row.stack ?? null;
-    if (place !== undefined && stack !== null && stack.role === 'member') {
-      openBlock(place.section, stack.group);
+    // selection leaves, until the user closes it again. So is one that a member's unreported
+    // terminal opened (the server's rule, copied in `unreported`), so that it stays open after the
+    // report.
+    for (const section of sections) {
+      for (const row of section.rows) {
+        const stack = row.stack ?? null;
+        if (
+          stack !== null &&
+          stack.role === 'member' &&
+          (row.id === selectedId || unreported(row))
+        ) {
+          openBlock(section.name, stack.group);
+        }
+      }
     }
   };
 
@@ -880,7 +924,11 @@ export function createList(root, hooks) {
         const place = placeOf(selected);
         const stack = place?.row.stack ?? null;
         if (place !== undefined && stack !== null && (stack.open || stack.role === 'member')) {
-          closeBlock(place.section, stack.group);
+          if (holdsStart(place.section, stack.group)) {
+            hooks.say?.(HOLDS_STARTING); // the server keeps it open: nothing moves
+          } else {
+            closeBlock(place.section, stack.group);
+          }
         } else {
           fold(true);
         }

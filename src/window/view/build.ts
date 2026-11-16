@@ -268,7 +268,9 @@ function stacked(
     group: payload.group,
     needsYou: payload.attention !== null,
     // Ruled 2026-11-16 (review 2): its row's terminal has not reported a session (S2 7.5), so the
-    // terminal's slot names no session for the page: the row stays on screen.
+    // terminal's slot names no session for the page: the row stays on screen. THE PAGE COPIES THIS
+    // RULE (web/list.js, `unreported`: the same terminal's `sessionId` null in `list.terminals`)
+    // to forget the closing and refuse ← and `×n` there; a change of one is a change of the other.
     unreported: terminal !== null && terminal.sessionId === null,
     payload,
   }));

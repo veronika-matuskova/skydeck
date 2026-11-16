@@ -19,12 +19,14 @@ import { controlClient } from '../src/window/client.ts';
 import { sleep } from '../test/helpers/keeper.ts';
 import { S1, S2, S3 } from '../test/helpers/platform.ts';
 import type { ClosedBlock } from '../src/window/protocol.ts';
+import { stackRows } from '../src/window/view/search/stacks.ts';
 import type { ServerSandbox } from '../test/helpers/window.ts';
 import { startTestServer } from '../test/helpers/window.ts';
 import { browser, newPage } from './helpers/browser.ts';
 import {
   after,
   connection,
+  editWorld,
   logOf,
   mark,
   PAGE_WAIT_MS,
@@ -33,9 +35,12 @@ import {
   readPage,
   RECORDER,
   resumeFromList,
+  scriptedList,
   selectedRow,
   showsText,
   shownText,
+  TERM_A,
+  TERM_B,
   termOf,
   toZone,
 } from './helpers/shell.ts';
@@ -969,6 +974,10 @@ test('search and stacks in the list', async (t) => {
       for (const id of [S1, S2, S3]) {
         await resumeHere(page, id);
       }
+      await until(
+        () => l.server.hub.list().every((term) => term.sessionId === term.expectedSessionId),
+        'the three programs reported their sessions',
+      );
       await untilRows(page, [S1, S2, S3], 'the open block under Open');
       // The member S2's terminal has the keyboard (a click on a running row).
       await page.locator(`#list [data-id="${S2}"]`).click();
@@ -1080,7 +1089,124 @@ test('search and stacks in the list', async (t) => {
       await untilSelected(page, S2);
       await until(async () => (await shape()) === both(true, false), "Open's opened by the chord");
       await untilClosed(page, shut('week', 'test'));
+
+      // A resume into a closed block of Open (CONSIDER c of review 2): Open's closed again, then
+      // This week's head S3 resumed from the list; it joins Open's block, the server selects it
+      // after the resume, and the block opens.
+      await page.locator(`#list [data-id="${S1}"]`).click();
+      await untilSelected(page, S1);
+      await page.locator(`#list [data-id="${S1}"] .row-stack`).click();
+      await untilClosed(page, [...shut('week', 'test'), ...shut('open', 'test')]);
+      await resumeHere(page, S3);
+      await untilLines(
+        page,
+        (drawn) =>
+          drawn.map((line) => `${line.section}:${line.id}:${line.stack}`).join(' ') ===
+          [`open:${S1}:head`, `open:${S2}:member`, `open:${S3}:member`, `week:${S4}:`].join(' '),
+        "S3 under Open, in its block's open members",
+      );
+      assert.equal(await selectedRow(page), S3);
+      await untilClosed(page, shut('week', 'test'));
       await healthy(page, l.problems);
+    },
+  );
+
+  await t.test(
+    'a closed block whose member has a terminal that has not reported a session is drawn open: the page forgets that it closed it, ← and `×n` say why they do nothing, the slot chord reaches the row; once it reported the block stays open and ← closes it (ruled 2026-11-16)',
+    async (t) => {
+      // A scripted server that applies the server's own rule (`stackRows`) to two rows of `test`
+      // under Open: S1 in TERM_A (slot 1, reported), S2 in TERM_B (slot 2), reported or not.
+      let reported = true;
+      let world: Awaited<ReturnType<typeof editWorld>> | null = null;
+      const blockList = (selected: string | null): Record<string, unknown> => {
+        const terminals = [
+          { id: TERM_A, slot: 1, sessionId: S1 },
+          { id: TERM_B, slot: 2, sessionId: reported ? S2 : null },
+        ];
+        const base = scriptedList(
+          [
+            { id: S1, terminal: TERM_A, slot: 1, title: 'one' },
+            { id: S2, terminal: TERM_B, slot: 2, title: 'two' },
+          ],
+          terminals,
+        ) as { sections: { rows: Record<string, unknown>[] }[] } & Record<string, unknown>;
+        const views = (world?.sent ?? []).filter((message) => message['t'] === 'view');
+        const closed = (views.at(-1)?.['closed'] ?? []) as ClosedBlock[];
+        const rows: Record<string, unknown>[] = (base.sections[0]?.rows ?? []).map((row) => ({
+          ...row,
+          group: 'test',
+        }));
+        const drawn = stackRows(
+          rows.map((row) => ({
+            id: row['id'] as string,
+            group: 'test',
+            needsYou: false,
+            unreported: terminals.find((term) => term.id === row['terminal'])?.sessionId === null,
+            row,
+          })),
+          'open',
+          closed,
+          selected,
+        ).map(({ entry, stack }) => ({ ...entry.row, stack }));
+        return {
+          ...base,
+          sections: [{ ...base.sections[0], count: 2, rows: drawn }],
+        };
+      };
+      const page = await newPage(t, chromium);
+      await page.addInitScript(RECORDER);
+      await page.addInitScript(VIEWS);
+      const problems = problemsOf(page);
+      world = await editWorld(t, page, blockList);
+      const w = world;
+      const resend = (): void => w.list(blockList);
+      await untilRows(page, [S1, S2], 'the open block');
+      await toZone(page, 'list');
+      assert.equal(await selectedRow(page), S1);
+      await page.keyboard.press('ArrowLeft');
+      await untilClosed(page, shut('open', 'test'));
+      await untilRows(page, [S1], 'closed');
+
+      // S2's terminal starts again and has not reported: the block is drawn open, the page forgets.
+      reported = false;
+      resend();
+      await untilRows(page, [S1, S2], 'open while S2 has not reported');
+      await untilClosed(page, []);
+      // ← and ×2 do nothing and say why; nothing is sent.
+      const views = (await sentViews(page)).length;
+      await page.keyboard.press('ArrowLeft');
+      await showsText(
+        page,
+        '#key-message',
+        /^this block holds a session that is still starting; it stays open$/,
+      );
+      await page.evaluate(() => {
+        const message = document.getElementById('key-message');
+        if (message !== null) message.textContent = '';
+      });
+      await page.locator(`#list [data-id="${S1}"] .row-stack`).click();
+      await showsText(
+        page,
+        '#key-message',
+        /^this block holds a session that is still starting; it stays open$/,
+      );
+      assert.equal((await sentViews(page)).length, views, 'no view');
+      assert.deepEqual(await rowIds(page), [S1, S2]);
+      // The slot chord reaches the drawn row of the unreported terminal.
+      await page.keyboard.press('Control+Shift+Digit2');
+      await untilSelected(page, S2);
+
+      // Reported: the block stays open (the page forgot it was closed); ← on its head closes it.
+      reported = true;
+      resend();
+      await page.locator(`#list [data-id="${S1}"]`).click();
+      await untilSelected(page, S1);
+      await toZone(page, 'list');
+      assert.deepEqual(await rowIds(page), [S1, S2], 'still open after the report');
+      await page.keyboard.press('ArrowLeft');
+      await untilClosed(page, shut('open', 'test'));
+      await untilRows(page, [S1], 'closed again: the guard let go');
+      assert.deepEqual(problems, []);
     },
   );
 
@@ -1096,6 +1222,11 @@ test('search and stacks in the list', async (t) => {
       for (const id of [S1, S2, S3]) {
         await resumeHere(page, id);
       }
+      // Each program has reported its session: until then its block cannot be closed.
+      await until(
+        () => l.server.hub.list().every((term) => term.sessionId === term.expectedSessionId),
+        'the three programs reported their sessions',
+      );
       await untilRows(page, [S1, S2, S3], 'the open block under Open');
       // S3 asks a question: it needs you, while S1 is selected.
       await page.locator(`#list [data-id="${S1}"]`).click();
