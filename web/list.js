@@ -244,7 +244,8 @@ function paintRow(row, text, done) {
     setText(mark, shown.map((candidate) => candidate.text).join(', '));
     setTip(mark, shown.map((candidate) => candidate.tip).join('\n'));
   }
-  // S2 12.3: `PR · failing`, then ` +30` dim; a chip with none open (`3 merged`, `closed`) dim.
+  // S2 12.3: `PR · failing`, then ` +30` in the chip's tint (dim on a grey chip); with none open
+  // `3 merged` in merged's tint, `closed` dim (F4).
   const chip = text.chip;
   if (row.chip.hidden !== (chip === null)) {
     row.chip.hidden = chip === null;
@@ -254,6 +255,8 @@ function paintRow(row, text, done) {
   setTip(row.chip, chip?.tip ?? '');
   setData(row.chip, 'dotted', String(chip?.dotted ?? false));
   setData(row.chip, 'dim', String(chip?.dim ?? false));
+  // F4: the state it names, for its tint (style.css); '' for one the page does not know.
+  setData(row.chip, 'level', chip?.level ?? '');
   setText(row.note, text.note === null ? '' : '✎');
   setTip(row.note, text.note === null ? '' : text.note === '' ? 'has a note' : text.note);
   setText(row.age, text.age);

@@ -1522,8 +1522,14 @@ page last proposed (`attach`, `resize`). The rules:
   the screen side allocate gigabytes of scrollback (ruled, plan task 12's review). The page
   computes its proposal itself (not with the fit addon): the most columns and rows whose screen
   fits the terminal's area, the screen being cell × count rounded to whole pixels as xterm.js
-  6.0.0 rounds it, and the room the addon gave its scroll bar (14 px) and xterm.js's padding
-  counted out; the answer does not depend on the terminal's current size. The fit addon's does (it
+  6.0.0 rounds it, and the room the addon gave its scroll bar (14 px) and the margin the page
+  keeps around the terminal's text (12.6) counted out — read at every count from the element the
+  style sheet gives it to, as lengths, so that the margin drawn and the margin counted cannot
+  drift apart (whatever unit or element sets it); the answer does not depend on the terminal's
+  current size. A first size the page asks for (an act's, `focus.area`) is counted by the same
+  rule for the terminal area's box as it is laid out, not rounded to whole pixels: at a display
+  scale of 125 % that box is a fraction, and the rounded one could hold one column more than the
+  view proposes once the terminal is there (F2, review 2). The fit addon's does (it
   divides by the cell of the current size), so at some widths no size proposes itself — 104
   columns propose 103 and 103 propose 104 — and a terminal shown there was resized every second
   (ruled by the plan owner, M4 of plan task 28's review). The proposal is a function of the box,
@@ -2239,10 +2245,10 @@ interactive list: open and finished pull requests are counted apart.
   one that most needs the user, in design 7.3's order without merged and closed: can't read
   (`can't read`), not fetched (`not fetched`), checks failing (`failing`), changes requested
   (`changes`), checks pending (`pending`), review required (`review`), draft (`draft`), approved
-  and green (`approved`). After it, dim, `+<n>` for the merged ones, when there are any. Closed
-  ones are not counted.
-- **With nothing open:** `<n> merged` (dim) when any is merged, else `closed` (dim); no chip when
-  none is attached.
+  and green (`approved`). After it `+<n>` for the merged ones, when there are any: in the chip's
+  tint (below), dim only on a grey chip. Closed ones are not counted.
+- **With nothing open:** `<n> merged` (in merged's tint) when any is merged, else `closed` (dim);
+  no chip when none is attached.
 - A chip whose state is `can't read` is drawn dotted.
 - **The tooltip** lists each open pull request with its own state (`repo #n · failing`, or `can't
   read · last read 3h ago`), then the merged and closed counts. The header (12.5) shows the open
@@ -2258,6 +2264,35 @@ interactive list: open and finished pull requests are counted apart.
 | 3 open, the worst failing; 30 merged | `3 PRs · failing +30` |
 | none open; 3 merged, 1 closed | `3 merged` |
 | none open; 1 closed | `closed` |
+
+**Colours** (asked for by the user on 2026-11-16, follow-up F4; the tints ruled by the lead). Each
+state has one quiet tint: on a chip, its text colour and a faint background of the same hue
+(`--pr-<tint>` and `--pr-<tint>-bg` in `web/style.css`, with values for both colour schemes), with
+the size, border and weight of a grey chip — the header's chip looks as the list's, with the
+neutral border (it had a red or amber border for failing, changes and pending before). Where a
+state is named outside a chip — the header's open pull requests (`acme/web #7 · failing`), the
+state on a line of the pull-request dialog, the quick switcher's chip — only the state's words take
+the tint's colour, without a background. A chip that sums several takes the tint of the state its
+text names, its `+<n>` too. The words stay, so the colour never says anything alone; an element
+names its state by its level (design 7.3), the page's own name for it, never a text of the
+server's. The tints stay below the attention marks (12.4), the user's one condition ("needs you /
+finished should be still more important"): only a row that needs you has a left bar and its
+reason's line in the reason's colour, and its title is the boldest (700; a running session's is
+600, any other row's 400); each tint is softer than the mark's colour of its family, and its text
+is no stronger than an ordinary row's title (`--dim`): on `--panel` and on `--sel` its contrast is
+at most `--dim`'s + 0.1 (ruled). Each tint's text has a contrast of at least 4.5 : 1 against its
+own background and against every background its words stand on (a row, hovered or selected; the
+header; the dialog; the switcher and its highlighted item), in both schemes
+(`test/web/pr-tints.test.ts`).
+
+| State | Tint |
+|---|---|
+| checks failing (`failing`), changes requested (`changes`) | red |
+| checks pending (`pending`) | amber |
+| review required (`review`) | blue |
+| approved and green (`approved`) | green |
+| merged (`3 merged`, a merged line of the dialog) | purple |
+| draft, closed, not fetched, can't read, a state the page does not know | grey, as before |
 
 ### 12.4 Attention: needs you and seen
 
@@ -2440,6 +2475,24 @@ from the ticket system: no API, no login. `skydeck show` prints the address as `
   recently shown detached beyond that; while the window is hidden (minimised) it detaches all but
   the selected one. Switching between attached terminals is instant; switching to another costs one
   snapshot (7.3).
+  The terminal's text keeps a margin in the terminal's own background: 8 px above and below,
+  10 px at the left, and 10 px between the text and the scroll bar's room, which stays at the
+  terminal's right edge and is always kept, whether the scroll bar shows or not (so without one
+  the text ends 24 px or more from the edge; ruled by the plan owner, F2's review 1: the size must
+  not depend on the scrollback). The size is in whole cells, so at the right and the bottom the
+  margin is wider by what is left of a cell. The size the page proposes is counted inside it
+  (8.2.6); what lies over the terminal (its bars, the hint, the find bar) keeps its place in the
+  terminal's box. A wheel in the margin does what a wheel over the nearest cell of the text does,
+  once: it scrolls the scrollback, or in the program's mouse mode reaches the program as one
+  report (ruled, F2's review 2). The lines that frame the terminal — the list's right edge, the
+  line under the header (in every pane: one header, one colour; and under an ended bar), the line
+  over the key bar — have one colour of their own (`--edge`), softer than the page's other lines
+  in both colour schemes; the focused zone's coloured top edge (12.9) is the focus sign and keeps
+  its colour. The notice bars over the terminal keep their own line (`--line2`): they lie over
+  the terminal, not on its frame, and must stand out from its text (ruled, F2's review 1). The owner's request of
+  2026-11-16 (follow-up F2): before it, the text touched the list and the header, and xterm.js's
+  own style painted the 4 px and 2 px it had there black, which read as a hard border, above all
+  in the light scheme.
   What the server says about a terminal is shown over that terminal, as the page's own text and
   never written into it (so that the page's screen stays the screen side's): the reconnecting bar
   (7.8) and "sized by another window" (8.2.6) while they hold; a gap or a newer keeper, which the

@@ -788,10 +788,19 @@ attached by themselves (design.md 7.3).
 **The window's chip**, in the list and on the header's third line, counts the open pull requests
 and the merged ones apart: `PR · failing` for one open pull request, `3 PRs · failing` for three,
 named by the one that most needs you (in this order: `can't read`, `not fetched`, `failing`,
-`changes`, `pending`, `review`, `draft`, `approved`), with a dim `+30` after it for 30 merged ones;
-with none open, a dim `3 merged`, or `closed`. It is dotted while it says `can't read`, and its
+`changes`, `pending`, `review`, `draft`, `approved`), with `+30` after it for 30 merged ones;
+with none open, `3 merged`, or a dim `closed`. It is dotted while it says `can't read`, and its
 tooltip lists each open one with its state. `skydeck ls` and the interactive list keep the command
 line's chip (design.md 7.3).
+
+The chip has a quiet colour for its state, in both colour schemes: red for `failing` and
+`changes`, amber for `pending`, blue for `review`, green for `approved`, purple for `3 merged`;
+`draft`, `closed`, `not fetched` and `can't read` stay grey. Its `+30` has the chip's colour (dim
+on a grey chip). The header's open pull requests, the state on a line of the pull-request dialog
+and the quick switcher's chip show the state's words in the same colour. Sessions that need you
+stay the strongest in the list: only they have a coloured bar at the left and their reason's line
+in its colour, and their titles are the boldest (a running session's title is semibold, any other
+row's regular); no chip's text is brighter than an ordinary row's title.
 
 #### The ticket link
 
@@ -1497,6 +1506,12 @@ old window instead of opening a second one; the server it replaces keeps none, s
 skydeck window and tab first for this update too, as for stage B. The banner shows only after WSL
 or the PC restarted; to have every command start in the window, set `"terminal": "window"`
 ("Starting sessions in the window from a terminal (stage C)" above).
+
+The update that brings the terminal's frame (softer lines around the terminal, and a margin
+between the terminal's text and the list, the header and the key bar) resizes every terminal of
+the window once, when a window first shows it after the update: the margin takes a little room (at
+a window of 1400 × 900, about two columns and one row), and Claude Code redraws its screen, as at any
+resize. It installs nothing; from then on the terminal's size changes only with the window's.
 
 ## Checking: `skydeck doctor`
 
