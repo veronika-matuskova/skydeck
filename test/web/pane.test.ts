@@ -118,7 +118,7 @@ test("a row whose terminal the list does not carry falls back to the row's own c
 
 // --- the selected session the list does not show (stage E, plan E13, task 95) -----------------
 
-/** A list whose sections carry `shown` (in This week) and whose `selectedRow` is `selectedRow`
+/** A list whose sections carry `shown` (in Recent) and whose `selectedRow` is `selectedRow`
  *  (absent when undefined: a list of a server before stage E). */
 function listOf(shown: RowPayload[], selectedRow?: RowPayload | null): ListMessage {
   return {

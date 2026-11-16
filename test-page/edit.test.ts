@@ -1788,7 +1788,7 @@ test('stage D: the dialogs, the Undo toast and the list keys', async (t) => {
   );
 
   await t.test(
-    "the selection after this page's `d` in This week: the next row, on the last row the one before it, on the only row none — never a row of Open",
+    "the selection after this page's `d` in Recent: the next row, on the last row the one before it, on the only row none — never a row of Open",
     async (t) => {
       const R = running(S4, TERM_A, 1);
       const d = await deck(t, chromium, {
@@ -1957,7 +1957,7 @@ test('stage D: the dialogs, the Undo toast and the list keys', async (t) => {
   }
 
   await t.test(
-    'the real server: five `d` 300 ms apart from the first row of This week mark five rows done (review 2’s S3, ruled)',
+    'the real server: five `d` 300 ms apart from the first row of Recent mark five rows done (review 2’s S3, ruled)',
     async (t) => {
       const l = await launched(t, chromium);
       const ids = [

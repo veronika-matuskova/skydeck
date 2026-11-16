@@ -1156,13 +1156,13 @@ instead of opening its dialog; type nothing then, and press the key again.
    the row stays under Open with a `done` mark, and stays selected. Click `Undo` within 5
    seconds: the mark goes.
 8. End the throwaway session: Ctrl+Shift+L to its terminal, look at the short id (`/exit` ends
-   the session it is typed into), `/exit`, then `Close` on its ended bar. Its row moves to This
-   week. Click it (it no longer runs, so the list gets the keyboard: the key bar says `Focus:
+   the session it is typed into), `/exit`, then `Close` on its ended bar. Its row moves to
+   Recent. Click it (it no longer runs, so the list gets the keyboard: the key bar says `Focus:
    list`; look at the short id) and press `d`. Expected: the row disappears, the toast says
    `Marked done: hidden from the list. It comes back on new activity.`, and the row after it in
-   This week is selected (the one before it when it was the last; none when it was alone) —
+   Recent is selected (the one before it when it was the last; none when it was alone) —
    another session: **click `Undo` now, before any key**. Expected: the throwaway session is back
-   in This week and selected again. (When the toast went before you clicked: `a` shows the done
+   in Recent and selected again. (When the toast went before you clicked: `a` shows the done
    sessions; click the throwaway session's row, look at its short id, press `d`, then `a` again.)
 9. Clear what this check set, with the throwaway session selected (look at the short id) and the
    key bar saying `Focus: list` (Ctrl+Shift+L until it does), each key only once its dialog is
@@ -1629,7 +1629,7 @@ chip on. Write down how many sessions the title bar counts.
    done sessions show with their `done` mark and the footer says `done sessions shown · hide`;
    click it again, and the footer is `<n> done hidden · show` again (or gone when none is done).
 4. **A block.** Blocks are open by default: a head with `×<n>` after its key, its other sessions
-   indented under it, and no line `+… more in <group>` after it. Look in This week, and in
+   indented under it, and no line `+… more in <group>` after it. Look in Recent, and in
    Earlier, for an open one. When Earlier is folded (none of its rows shows), a click on its header
    unfolds it; when its rows show, do not click its header (that click folds it). Take an open
    block none of whose rows has a coloured bar at its left (a session that needs you). Skip a

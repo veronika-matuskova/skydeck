@@ -16,7 +16,7 @@
  * @property {(change: { filter?: string, unfolded?: string[], showDone?: boolean }) => void} view
  */
 
-const SECTION_TITLES = { open: 'Open', week: 'This week', earlier: 'Earlier' };
+const SECTION_TITLES = { open: 'Open', week: 'Recent', earlier: 'Earlier' };
 /** PgUp and PgDn move this many rows. */
 const PAGE_ROWS = 10;
 

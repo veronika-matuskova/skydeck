@@ -679,6 +679,8 @@ the render key, `now` from `serverNow` with the time the shown list came; `overL
   it; on the only row, none; a `d` whose answer is a refusal moves nothing. (Ruled) `d` on A, ↑ to
   Z before the list comes → the selection stays on Z; the Undo of this page's `d` selects the
   session again when it is back, unless the selection was moved meanwhile.
+- (Since follow-up F5 (2026-11-16) the section This week is titled Recent, its key stays `week`;
+  this plan, a record, keeps the old name in its text.)
 - `shell.test.ts`: the six keys are cancelled in the list zone; with no row selected the key bar
   says `no session selected`.
 

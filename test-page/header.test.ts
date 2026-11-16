@@ -1507,7 +1507,7 @@ test("stage D's header and the pull-request dialog's list", async (t) => {
   );
 
   await t.test(
-    'the real server, a quiet page: `d` on a row of This week selects the next row of This week (the order of `list` and `result`, ruled 06:38Z)',
+    'the real server, a quiet page: `d` on a row of Recent selects the next row of Recent (the order of `list` and `result`, ruled 06:38Z)',
     async (t) => {
       const l = await withGh(t, chromium);
       for (const id of [S1, S2, S3, S4]) l.d.resumable(id);

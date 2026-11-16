@@ -9,6 +9,9 @@ Ctrl+Shift+P — and the page's own icon (S2 12.12). It also settles stage A's k
 selected session the filter hides (S2 12.6). It uses stage B's attention and stage C's restore
 when they are there and works without them.
 
+> Since follow-up F5 (2026-11-16) the section This week is titled Recent (its key stays `week`);
+> this plan, a record, keeps the old name in its text.
+
 **Architecture:** Every rule that matches, stacks or ranks is a pure function of the view model,
 in a directory of its own (`src/window/view/search/`), called by `buildListMessage`. The page
 sends what it wants to see — the filter's text, the chips, the stacks it opened, the switcher's

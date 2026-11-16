@@ -2132,7 +2132,10 @@ bar at the bottom. The list has three sections:
   time, then sessions running in another terminal by the time they started. The order does not
   change while the window is open except when a row joins or leaves; attention is a mark on the
   row (12.4), never a move.
-- **This week**: not running, last activity within 7 days, most recent first.
+- **Recent**: not running, last activity within 7 days (a rolling 7 days, not the calendar week),
+  most recent first. Its title is `Recent`; its key in the code and the protocol is `week`. Its
+  header's tooltip says `last active in the last 7 days` (follow-up F5, on the owner's words
+  "Maybe recent or something like that?"); the other two headers have no tooltip.
 - **Earlier**: the rest, folded by default; the folded header shows the count and the time span.
   A click on its header folds and unfolds it, as ← and → do, and leaves the keyboard on the list
   (ruled by the plan owner, plan task 27).
@@ -2171,14 +2174,14 @@ rule (4.3; stage B, plan B7).
   click or ← closes it to `ORB-2107 ×4 … +3 more`, a click or → opens it again. A filter flattens
   every block. (Ruled on 2026-11-16, follow-up F3, on the owner's words "it could group them
   togather (expanded by default, could collaps) … by the state and after that by group"; until
-  then only This week and Earlier stacked, closed by default, and running sessions never did.)
+  then only Recent and Earlier stacked, closed by default, and running sessions never did.)
 - Slot numbers 1–9 show at the left of Open's rows.
 
 The rule of blocks is the server's (4.3; stage E, plan E6 as ruled on 2026-11-16 for follow-up
 F3). A block is what the code and the protocol call a stack (`stackRows`, the row's `stack`,
-`data-stack`). In every section — Open, This week and Earlier —, each on its own, the rows of one
+`data-stack`). In every section — Open, Recent and Earlier —, each on its own, the rows of one
 group (the row's group as sanitised, compared as exact text) form a block when there are at least
-two: Open holds only blocks of running sessions, This week only of this week's, and a group with
+two: Open holds only blocks of running sessions, Recent only of the sessions it holds, and a group with
 rows in two sections is two blocks. Every row of the group is in its block, one that a terminal of
 the window holds (running, starting or ended: it may hold a slot) and one that needs you (12.4)
 too. A block sits where its first row sits in the section's order (12.1), its other rows right
@@ -3704,7 +3707,7 @@ the header's "opened <time> · last active <age>" with where the title comes fro
 W27–W29.
 
 **Stage E — search.** Several words and the short id in the filter, done sessions while filtering,
-the chips, the quick switcher Ctrl+Shift+P, the blocks of one group (12.2, 12.8; in This week and Earlier until follow-up F3, in every section and open by default since). The
+the chips, the quick switcher Ctrl+Shift+P, the blocks of one group (12.2, 12.8; in Recent and Earlier until follow-up F3, in every section and open by default since). The
 page's own icon (12.12). Checks W30, W31, and W3's icon on the taskbar button.
 
 ## 20. Left out of step 2 on purpose

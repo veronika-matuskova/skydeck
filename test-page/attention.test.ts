@@ -798,7 +798,7 @@ test('attention in the page', async (t) => {
     'a click on the notification of a session a closed block hides and no terminal of the window names — one that runs elsewhere and asks, one not running that ended unexpectedly, its terminal closed — selects it and its block opens (F3, G5); an id the list neither draws nor holds in `needYou.order` is still refused',
     async (t) => {
       // Open: S1 in the window (slot 1), the head of a block of `test`; S2 runs elsewhere and asks,
-      // its member. This week: S4, the head of a block of `orb`; S3 ended unexpectedly (its window
+      // its member. Recent: S4, the head of a block of `orb`; S3 ended unexpectedly (its window
       // terminal was closed), its member. While a block is closed (and its member not selected)
       // the list carries its head only, with `+1 more in … · 1 needs you`; `needYou.order` holds
       // both members (G5). A session the list does not show for another reason is in neither.

@@ -183,7 +183,7 @@ test('sections: running rows are in Open, in the window or elsewhere', () => {
   assert.deepEqual(ids(message, 'earlier'), []);
 });
 
-test('sections: not running and active within 7 days → This week, the most recent first', () => {
+test('sections: not running and active within 7 days → Recent, the most recent first', () => {
   const message = buildListMessage(
     input({
       rows: rows([
@@ -237,7 +237,7 @@ test('sections: Earlier unfolded when the view names it, the most recent first',
   assert.deepEqual(ids(message, 'earlier'), [S1, S3, S2]);
 });
 
-test('sections: Open and This week are never folded', () => {
+test('sections: Open and Recent are never folded', () => {
   const message = buildListMessage(
     input({ rows: rows([running(S1), ds({ id: S2 })]), view: { unfolded: [] } }),
   );

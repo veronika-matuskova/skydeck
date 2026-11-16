@@ -13,7 +13,7 @@ import type { TerminalInfo, TerminalState } from '../hub.ts';
 import type { RowPayload } from '../protocol.ts';
 import { windowChip } from './chip.ts';
 
-/** S2 12.1: This week holds what was last active at most 7 days ago. */
+/** S2 12.1: Recent (key `week`) holds what was last active at most 7 days ago. */
 const WEEK_NS: Ns = 7n * 86_400n * 1_000_000_000n;
 
 /** The note lines a row carries (S2 8.2.3: "the note's first three lines"). */
@@ -35,7 +35,7 @@ export const MAY_START: ReadonlySet<TerminalState> = new Set([
 
 /**
  * S2 12.1: Open for a row that is open (running or starting, in the window or elsewhere: the caller
- * knows the terminals); else This week when its last activity is at most 7 days before `nowNs` (or
+ * knows the terminals); else Recent (key `week`) when its last activity is at most 7 days before `nowNs` (or
  * after it: the clock can step back); else Earlier.
  */
 export function sectionOf(row: ListRow, nowNs: Ns, isOpen: boolean): 'open' | 'week' | 'earlier' {

@@ -662,8 +662,8 @@ effect.
 ### Using the window
 
 - **The list**, on the left, has three sections: **Open** (running or starting, in the window or in
-  another terminal; the window's terminals carry the slots 1–9), **This week** and **Earlier**
-  (folded; a click on its header unfolds it). Done sessions are hidden: the footer's `show`, or
+  another terminal; the window's terminals carry the slots 1–9), **Recent** (not running, last active in the last 7
+  days) and **Earlier** (folded; a click on its header unfolds it). Done sessions are hidden: the footer's `show`, or
   `a`, shows them.
 - **A session that is not running**: one click selects it and shows its resume card, with the
   exact command it will run. Enter, a double click or `Resume here` resumes it into the window.
@@ -1114,9 +1114,9 @@ clicked again, the page reloads, or the switcher (below) clears it to show a ses
 The chips are buttons: Tab from the field reaches them, Enter or Space presses the one that has
 the keyboard, and while one has it no list key acts.
 
-**Blocks.** In every section — Open, This week and Earlier —, each on its own, the sessions of one
+**Blocks.** In every section — Open, Recent and Earlier —, each on its own, the sessions of one
 group sit together as a block when there are at least two: under Open only running ones, under
-This week only this week's, so a group with sessions in two sections is two blocks. Every session
+Recent only the ones it holds, so a group with sessions in two sections is two blocks. Every session
 of the group is in its block, one that has a terminal of the window and one that needs you too. A
 block sits where its first session sits in the section's order (under Open: by slot), and the
 others follow it in that order, indented, so the slot numbers under Open can run `1 3 2`. That
@@ -1159,7 +1159,7 @@ before. A section's count counts every session in it, those of a closed block to
   With done sessions shown the session stays listed, still the head, and stays selected.
 - While filtering, every session stands alone.
 
-(Until 2026-11-16 only This week and Earlier stacked, closed by default, and running sessions
+(Until 2026-11-16 only Recent and Earlier stacked, closed by default, and running sessions
 never did; the owner asked for blocks in every section, open by default.)
 
 Each window has its own filter, chips, closed blocks, folded Earlier and done shown. A reload (F5)

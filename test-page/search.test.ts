@@ -454,7 +454,7 @@ test('search and stacks in the list', async (t) => {
       session(d, S3, 4n * MIN, 'alpha deploy');
       session(d, S4, 5n * MIN, 'alpha login done');
       markDone(d.deck, S4);
-      await untilRows(page, [S1, S2, S3], 'This week');
+      await untilRows(page, [S1, S2, S3], 'Recent');
       await showsText(page, '#list .list-footer', /^1 done hidden · show$/);
       assert.match(
         (await page.getAttribute('#list .list-filter', 'placeholder')) ?? '',
@@ -496,7 +496,7 @@ test('search and stacks in the list', async (t) => {
       pullRequest(d, S2, 2, 'merged');
       setNote(d.deck, S3, 'only a note');
       setNote(d.deck, S5, 'an old note');
-      await untilRows(page, [S1, S2, S3, S4], 'This week, Earlier folded');
+      await untilRows(page, [S1, S2, S3, S4], 'Recent, Earlier folded');
       assert.deepEqual(await chips(page), [
         ['Running', 'false'],
         ['Open PR', 'false'],
@@ -629,7 +629,7 @@ test('search and stacks in the list', async (t) => {
   );
 
   await t.test(
-    'a block: three sessions of ORB-1 in This week → OPEN by default: the head with ×3, the members indented, no line; ← on the head → closed, the line `+2 more in ORB-1`; ↓ from a closed head skips its members and the line; → on the head → open; ← on a member → the head selected and the block closed; a click on the line → open; ← → on a row in no block fold and unfold Earlier as before; a click on ×3 closes and opens, and with a member selected leaves the block open, the selection where it was and says why',
+    'a block: three sessions of ORB-1 in Recent → OPEN by default: the head with ×3, the members indented, no line; ← on the head → closed, the line `+2 more in ORB-1`; ↓ from a closed head skips its members and the line; → on the head → open; ← on a member → the head selected and the block closed; a click on the line → open; ← → on a row in no block fold and unfold Earlier as before; a click on ×3 closes and opens, and with a member selected leaves the block open, the selection where it was and says why',
     async (t) => {
       const l = await launchedWithViews(t, chromium);
       const { page, d } = l;
@@ -1063,9 +1063,9 @@ test('search and stacks in the list', async (t) => {
       await until(async () => (await shape()) === both(true, true), 'two open blocks');
       assert.equal(await selectedRow(page), S2, "Open's member, from its resume");
 
-      // `×2` on This week's block with Open's member selected: closed, the selection stays.
+      // `×2` on Recent's block with Open's member selected: closed, the selection stays.
       await page.locator(`#list [data-id="${S3}"] .row-stack`).click();
-      await until(async () => (await shape()) === both(true, false), "This week's closed");
+      await until(async () => (await shape()) === both(true, false), "Recent's closed");
       await untilClosed(page, shut('week', 'test'));
       assert.equal(await selectedRow(page), S2, 'the selection stays');
 
@@ -1076,12 +1076,12 @@ test('search and stacks in the list', async (t) => {
       await until(async () => (await shape()) === both(false, false), 'both closed');
       await untilClosed(page, [...shut('week', 'test'), ...shut('open', 'test')]);
 
-      // Opening This week's leaves Open's closed.
+      // Opening Recent's leaves Open's closed.
       await page.locator(`#list .list-more[data-head="${S3}"]`).click();
-      await until(async () => (await shape()) === both(false, true), "This week's open");
+      await until(async () => (await shape()) === both(false, true), "Recent's open");
       await untilClosed(page, shut('open', 'test'));
 
-      // A selection that opens Open's (a slot chord of its hidden member) leaves This week's closed.
+      // A selection that opens Open's (a slot chord of its hidden member) leaves Recent's closed.
       await page.locator(`#list [data-id="${S3}"] .row-stack`).click();
       await until(async () => (await shape()) === both(false, false), 'both closed again');
       await untilClosed(page, [...shut('open', 'test'), ...shut('week', 'test')]);
@@ -1091,7 +1091,7 @@ test('search and stacks in the list', async (t) => {
       await untilClosed(page, shut('week', 'test'));
 
       // A resume into a closed block of Open (CONSIDER c of review 2): Open's closed again, then
-      // This week's head S3 resumed from the list; it joins Open's block, the server selects it
+      // Recent's head S3 resumed from the list; it joins Open's block, the server selects it
       // after the resume, and the block opens.
       await page.locator(`#list [data-id="${S1}"]`).click();
       await untilSelected(page, S1);
@@ -1525,7 +1525,7 @@ test('search and stacks in the list', async (t) => {
       session(d, S4, 20n * DAY, 'old work');
       session(d, S5, 4n * MIN, 'done work');
       markDone(d.deck, S5);
-      await untilRows(page, [S1, S2, S3], 'This week: an open block and a row');
+      await untilRows(page, [S1, S2, S3], 'Recent: an open block and a row');
 
       await toZone(page, 'list');
       await page.keyboard.press('/');
