@@ -2774,8 +2774,11 @@ selects the row above it; while a filter is set nothing folds. On a block (12.2;
 E7 as ruled on 2026-11-16), ← on an open head closes it, ← on a member selects the head and closes
 the block, as folding Earlier first selects the row above it (in the list zone, where the user sees
 the selection move; a click on `×n` never moves it, 12.2) — except on a block that a member's
-unreported terminal holds open, where ← does nothing and says so (12.2) —, and → on a closed head
-opens it; on
+unreported terminal holds open, where ← does nothing, selects no head and says `this block holds
+a session that is still starting; it stays open` (12.2) —, and → on a closed head opens it (a
+click on `×n` that would close a block says first `this block holds the selected session; it stays
+open` when a member other than the head is selected, and only else the starting line; ruled on
+2026-11-16); on
 any other row — and ← on a closed head, → on an open head or on a member — ← and → fold and unfold
 Earlier. Ctrl+Shift+1–9 select the session of that slot also while a closed block hides it, and
 its block opens (12.2); a member whose terminal has not reported a session is never hidden (its
