@@ -662,9 +662,9 @@ effect.
 ### Using the window
 
 - **The list**, on the left, has three sections: **Open** (running or starting, in the window or in
-  another terminal; the window's terminals carry the slots 1–9), **Recent** (not running, last active in the last 7
-  days) and **Earlier** (folded; a click on its header unfolds it). Done sessions are hidden: the footer's `show`, or
-  `a`, shows them.
+  another terminal; the window's terminals carry the slots 1–9), **Recent** (not running, last
+  active in the last 7 days) and **Earlier** (folded; a click on its header unfolds it). Done
+  sessions are hidden: the footer's `show`, or `a`, shows them.
 - **A session that is not running**: one click selects it and shows its resume card, with the
   exact command it will run. Enter, a double click or `Resume here` resumes it into the window.
 - **A running session** of the window: a click shows its terminal. A session that runs in another
@@ -1116,7 +1116,8 @@ the keyboard, and while one has it no list key acts.
 
 **Blocks.** In every section — Open, Recent and Earlier —, each on its own, the sessions of one
 group sit together as a block when there are at least two: under Open only running ones, under
-Recent only the ones it holds, so a group with sessions in two sections is two blocks. Every session
+Recent only recent ones (not running, last active in the last 7 days), so a group with sessions in
+two sections is two blocks. Every session
 of the group is in its block, one that has a terminal of the window and one that needs you too. A
 block sits where its first session sits in the section's order (under Open: by slot), and the
 others follow it in that order, indented, so the slot numbers under Open can run `1 3 2`. That

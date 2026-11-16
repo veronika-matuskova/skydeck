@@ -2135,7 +2135,7 @@ bar at the bottom. The list has three sections:
 - **Recent**: not running, last activity within 7 days (a rolling 7 days, not the calendar week),
   most recent first. Its title is `Recent`; its key in the code and the protocol is `week`. Its
   header's tooltip says `last active in the last 7 days` (follow-up F5, on the owner's words
-  "Maybe recent or something like that?"); the other two headers have no tooltip.
+  "Maybe recent or something like thatt?"); the other two headers have no tooltip.
 - **Earlier**: the rest, folded by default; the folded header shows the count and the time span.
   A click on its header folds and unfolds it, as ← and → do, and leaves the keyboard on the list
   (ruled by the plan owner, plan task 27).
@@ -2181,10 +2181,10 @@ The rule of blocks is the server's (4.3; stage E, plan E6 as ruled on 2026-11-16
 F3). A block is what the code and the protocol call a stack (`stackRows`, the row's `stack`,
 `data-stack`). In every section — Open, Recent and Earlier —, each on its own, the rows of one
 group (the row's group as sanitised, compared as exact text) form a block when there are at least
-two: Open holds only blocks of running sessions, Recent only of the sessions it holds, and a group with
-rows in two sections is two blocks. Every row of the group is in its block, one that a terminal of
-the window holds (running, starting or ended: it may hold a slot) and one that needs you (12.4)
-too. A block sits where its first row sits in the section's order (12.1), its other rows right
+two: Open holds only blocks of running sessions, Recent only of recent ones (not running, last
+active within 7 days), and a group with rows in two sections is two blocks. Every row of the group
+is in its block, one that a terminal of the window holds (running, starting or ended: it may hold
+a slot) and one that needs you (12.4) too. A block sits where its first row sits in the section's order (12.1), its other rows right
 after it in that order; that first row is its head. A row whose group no other row of its section
 has, and a row without a group, are drawn as before; while a filter or a chip is set (12.8) no
 block is formed. A block is open unless the page's view names its section and group in `closed`
