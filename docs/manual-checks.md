@@ -1629,26 +1629,29 @@ chip on. Write down how many sessions the title bar counts.
    done sessions show with their `done` mark and the footer says `done sessions shown · hide`;
    click it again, and the footer is `<n> done hidden · show` again (or gone when none is done).
 4. **A block.** Blocks are open by default: a head with `×<n>` after its key, its other sessions
-   indented under it. Look in This week, and in Earlier, for an OPEN one: its other sessions
-   indented under the head, and no line `+… more in <group>` after it. Skip a closed one (a head
-   followed by that line): ← on a closed head folds Earlier, which with the selection inside it
-   selects the row above, a real session. When Earlier is folded (none of its rows shows), a click
-   on its header unfolds it; when its rows show, do not click its header (that click folds it).
-   Take an open block none of whose rows has a coloured bar at its left (a session that needs
-   you); when there is none, write that down and go on with step 5. Click that
-   block's head once, on its title (the row with `×<n>`). Expected: the head is selected. Then
-   look at the key bar: it must say `Focus: list`. When it says `Focus: terminal` (the head has a
-   terminal in the window), press Ctrl+Shift+L once and look again; until it says `Focus: list`
-   press nothing else, and leave this step out if it does not. That is a real session: from here
-   to the end of this step press only ← and →, never Enter (Enter would resume it). Press ←: the
-   block closes — its indented sessions are gone, the line `+<n−1> more in <group>` follows the
-   head, and the head stays selected. Press →: it opens again, its sessions indented under the
-   head, and the line is gone. Press ← once more, then click the `+… more` line once: the block
-   opens, the head stays selected and the key bar still says `Focus: list`. Then click the `×<n>`
-   after the head's key: the block closes; wait a moment (two quick clicks are a double click,
-   which acts once) and click it again: it opens; neither click moved the selection or the
-   keyboard. The block is open again, as you found it. Then click the throwaway session's row once
-   (look at the short id): the next steps start from it.
+   indented under it, and no line `+… more in <group>` after it. Look in This week, and in
+   Earlier, for an open one. When Earlier is folded (none of its rows shows), a click on its header
+   unfolds it; when its rows show, do not click its header (that click folds it). Take an open
+   block none of whose rows has a coloured bar at its left (a session that needs you). Skip a
+   closed one (a head followed by a `+… more` line): ← on a closed head folds Earlier, which with
+   the selection inside Earlier selects the row above it, a real session. When there is no such
+   open block, write that down and go on with step 5. Click that block's head once, on its title
+   (the row with `×<n>`). Expected: the head is selected. Look at the key bar: it must say `Focus:
+   list`. When it says `Focus: terminal` (the head has a terminal in the window), press
+   Ctrl+Shift+L once and look again; until it says `Focus: list` press nothing else, and leave
+   this step out if it does not. That is a real session: from here to the end of this step press
+   only ← and →, never Enter (Enter would resume it), and press ← only while you see that the
+   selected row is that head with its sessions indented under it (the block open); when it is
+   not, press nothing more and write down what you see. Press ←. Expected: the block closes — its
+   indented sessions are gone, the line `+<n−1> more in <group>` follows the head, and the head
+   stays selected. Press →. Expected: it opens again, its sessions indented under the head, the
+   line gone, the head still selected. Look again that the head is selected with its sessions
+   indented under it, then press ← once more: it closes as before. Click the `+… more` line once.
+   Expected: the block opens, the head stays selected and the key bar still says `Focus: list`.
+   Then click the `×<n>` after the head's key: the block closes; wait a moment (two quick clicks
+   are a double click, which acts once) and click it again: it opens; neither click moved the
+   selection or the keyboard. The block is open again, as you found it. Then click the throwaway
+   session's row once (look at the short id): the next steps start from it.
    When you unfolded Earlier in this step and the throwaway session's row is not in Earlier, fold
    Earlier again now, with a click on its header. When its row is in Earlier, leave Earlier
    unfolded until the end of step 6 (folding Earlier with the selection inside it selects the

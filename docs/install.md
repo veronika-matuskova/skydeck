@@ -1408,9 +1408,13 @@ manifest names no start address).
   be closed: ← and its `×n` do nothing on it, and it stays open. A window remembers at most 64
   closed blocks: closing another opens the one closed first again.
 - **A slot chord right after a start.** Until the program of a terminal has reported its session
-  (usually within seconds of its start), a slot chord of a session that a closed block hides says
-  `no session in slot 3`, as it does for one the filter hides: open the block, or press it again
-  a moment later.
+  (usually a few seconds after it starts), a slot chord of a session that a closed block hides says
+  `no session in slot 3` and does nothing else, as it does for one the filter hides. You can meet
+  it only for a session started into a block you had already closed in this window (by a restore,
+  or with `--window` from a terminal; a resume or a new session from the window selects its
+  session, which opens the block), or for a block you closed in a session's first seconds. Once
+  the session is reported the chord selects it and opens its block: press it again a moment
+  later, or open the block.
 - **The automatic pull-request refresh** (design.md 7.3) follows the sessions the list's
   sections show, and a selected session the list does not show while a terminal of the window
   holds it (its header shows its pull requests). So the sessions a closed block hides — under

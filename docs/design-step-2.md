@@ -2706,9 +2706,13 @@ E7 as ruled on 2026-11-16), ← on an open head closes it, ← on a member selec
 the block, as folding Earlier first selects the row above it, and → on a closed head opens it; on
 any other row — and ← on a closed head, → on an open head or on a member — ← and → fold and unfold
 Earlier. Ctrl+Shift+1–9 select the session of that slot also while a closed block hides it, and
-its block opens (12.2). A named limit: until a terminal's program has reported its session (7.5),
-its slot names no session, so for a session a closed block hides the slot chord then says `no
-session in slot 3`, as it does for one a filter hides. Ctrl+Tab skips a member of a closed block
+its block opens (12.2). A named limit (ruled on 2026-11-16): until a terminal's program has
+reported its session (7.5), usually a few seconds after it starts, its slot names no session, so
+for a session a closed block hides the slot chord says `no session in slot 3` and does nothing
+else, as it does for one a filter hides. It can show only for a session started into a block that
+is already closed in this window (a restore, or a start from the command line; a resume or a new
+session from the page selects its session, which opens the block), or for a block closed in a
+session's first seconds; once the session is reported the chord selects it and opens its block. Ctrl+Tab skips a member of a closed block
 that no terminal of the window holds (the page never knows a closed block's members), as it skips
 a row a filter or a folded Earlier hides; a member that a terminal of the window holds it selects,
 and its block opens, as for every other selection of a hidden member (ruled on 2026-11-16). While
