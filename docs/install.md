@@ -1121,9 +1121,10 @@ session whose group no other session of its section has, or that has no group, i
 before. A section's count counts every session in it, those of a closed block too.
 
 - A click on `×4` closes or opens the block, and a click on the `+3 more` line opens it. A click
-  selects nothing and leaves the keyboard where it was, but a click on `×4` that closes the block
-  while one of its sessions is selected selects the head first. A double click on either acts
-  once.
+  selects nothing and leaves the keyboard where it was. While a session of the block other than
+  its head is selected, a click on `×4` does not close it: the selection, the keyboard and the
+  right side stay, and the key bar says `this block holds the selected session; it stays open`
+  (← in the list closes it, selecting the head first). A double click on either acts once.
 - In the list (`Focus: list`): ← on the head or on another session of an open block closes it (on
   another session it selects the head first), → on a closed head opens it. Otherwise ← and → fold
   and unfold Earlier as before: on a session in no block, and also ← on a closed head and → on an

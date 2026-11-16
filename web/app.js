@@ -211,6 +211,7 @@ const list = createList(dom.list, {
   select: (id, how) => select(id, how),
   activate: (id) => activate(id),
   view: (change) => changeView(change),
+  say: (text) => say(text),
 });
 const terminalView = createTerminalView(dom.terminal, {
   send: (message) => {

@@ -2200,9 +2200,12 @@ colour of the title bar's `need you` count, with no bar and no bold, which stay 
 that needs you (12.4); the count is the server's (`hiddenNeedYou`), taken from the same fact as a
 row's own mark, never from a text, and the head's own mark is on its row. A click on `×4` or on
 the `+3 more` line closes or opens the block; it selects nothing and leaves the keyboard where it
-was, but a click on `×4` that closes the block while one of its members is selected selects the
-head first, as ← does (12.9; else the selection would open it again). The keys are 12.9's. The
-page sends `closed` in every view (`[]` at least), at most 64 entries, the oldest dropped (that
+was. A click never moves the selection (ruled on 2026-11-16, review 2 of follow-up F3): while a
+member other than the head is selected, a click on `×4` leaves the block open, and the selection,
+the focus and the right side as they are, and the key bar says `this block holds the selected
+session; it stays open` (selecting the head would move the keyboard into the head's terminal
+from the terminal zone); ← in the list on a member still selects the head and closes (12.9).
+The keys are 12.9's. The page sends `closed` in every view (`[]` at least), at most 64 entries, the oldest dropped (that
 block opens again); a group the server would refuse — not well formed, or over 1,024 bytes
 (8.2.3) — is never sent, so its block cannot be closed: ← and `×4` do nothing on it, and it stays
 open (a named limit). `d` on a closed block's head marks that session only: the next member
@@ -2703,7 +2706,8 @@ clears the field), so from the field the terminal is one more Esc away (ruled by
 plan task 27). Folding Earlier (← or a click on its header) with the selection inside it first
 selects the row above it; while a filter is set nothing folds. On a block (12.2; stage E, plan
 E7 as ruled on 2026-11-16), ← on an open head closes it, ← on a member selects the head and closes
-the block, as folding Earlier first selects the row above it, and → on a closed head opens it; on
+the block, as folding Earlier first selects the row above it (in the list zone, where the user sees
+the selection move; a click on `×n` never moves it, 12.2), and → on a closed head opens it; on
 any other row — and ← on a closed head, → on an open head or on a member — ← and → fold and unfold
 Earlier. Ctrl+Shift+1–9 select the session of that slot also while a closed block hides it, and
 its block opens (12.2). A named limit (ruled on 2026-11-16): until a terminal's program has

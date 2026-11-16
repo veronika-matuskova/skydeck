@@ -795,59 +795,100 @@ test('attention in the page', async (t) => {
   );
 
   await t.test(
-    'a click on the notification of a session a closed block hides, with no terminal of the window (it runs elsewhere): it is selected and its block opens (F3, G5; one the filter hides stays refused, the case above)',
+    'a click on the notification of a session a closed block hides and no terminal of the window names — one that runs elsewhere and asks, one not running that ended unexpectedly, its terminal closed — selects it and its block opens (F3, G5); an id the list neither draws nor holds in `needYou.order` is still refused',
     async (t) => {
       // Open: S1 in the window (slot 1), the head of a block of `test`; S2 runs elsewhere and asks,
-      // a member of that block. While the view closes the block (and S2 is not selected) the list
-      // carries S1 only, with `+1 more in test · 1 needs you`; `needYou.order` holds S2 (G5).
-      const head = (open: boolean): Row => ({
-        group: 'test',
+      // its member. This week: S4, the head of a block of `orb`; S3 ended unexpectedly (its window
+      // terminal was closed), its member. While a block is closed (and its member not selected)
+      // the list carries its head only, with `+1 more in … · 1 needs you`; `needYou.order` holds
+      // both members (G5). A session the list does not show for another reason is in neither.
+      const S4 = '3e8c6f4b-1a5d-4c9e-8f6a-5b4c3d2e1f0a';
+      const OUT = '4f9d7a5c-2b6e-4d0f-9a7b-6c5d4e3f2a1b';
+      const block = (group: string, head: string, open: boolean): Row => ({
+        group,
         size: 2,
         open,
         role: 'head',
-        head: S1,
+        head,
         hiddenNeedYou: open ? 0 : 1,
       });
-      const member = running(S2, '', 0, {
-        title: 'beta',
-        terminal: null,
-        slot: null,
-        elsewhere: { pid: 4242, tty: null },
-        attention: attention('asks', 1n),
-        stack: { ...head(true), role: 'member' },
-      });
       const blockWorld = (view: { filter: string; selected: string | null }): Row => {
-        const open = view.selected === S2; // the server opens the block for its selected member
-        const first = running(S1, TERM_A, 1, { title: 'alpha', stack: head(open) });
-        return listOf({ open: open ? [first, member] : [first] }, [terminal(TERM_A, S1, 1)], {
-          count: 1,
-          order: [S2],
+        // The server opens a block for its selected member.
+        const openTest = view.selected === S2;
+        const openOrb = view.selected === S3;
+        const first = running(S1, TERM_A, 1, {
+          title: 'alpha',
+          group: 'test',
+          stack: block('test', S1, openTest),
         });
+        const elsewhere = running(S2, '', 0, {
+          title: 'beta',
+          group: 'test',
+          terminal: null,
+          slot: null,
+          elsewhere: { pid: 4242, tty: null },
+          attention: attention('asks', 1n),
+          stack: { ...block('test', S1, true), role: 'member' },
+        });
+        const fourth = row(S4, { title: 'delta', group: 'orb', stack: block('orb', S4, openOrb) });
+        const ended = row(S3, {
+          title: 'gamma',
+          group: 'orb',
+          attention: attention('ended', 2n),
+          stack: { ...block('orb', S4, true), role: 'member' },
+        });
+        return listOf(
+          {
+            open: openTest ? [first, elsewhere] : [first],
+            week: openOrb ? [fourth, ended] : [fourth],
+          },
+          [terminal(TERM_A, S1, 1)],
+          { count: 2, order: [S2, S3] },
+        );
       };
       const w = await attentionWorld(t, chromium, blockWorld, (page) =>
         notificationDouble(page, 'granted'),
       );
-      await titleIs(w.page, '(1) skydeck');
+      await titleIs(w.page, '(2) skydeck');
       assert.equal(await selectedRow(w.page), S1);
-      await showsText(w.page, '#list .list-more', /^\+1 more in test · 1 needs you$/);
       await pageFocus(w.page, false);
       w.send({ t: 'notify', sessionId: S2, title: 'beta', reason: 'asks', detail: null });
-      await recorded(w.page, (r) => r.made.length === 1, 'the notification');
+      w.send({ t: 'notify', sessionId: S3, title: 'gamma', reason: 'ended', detail: null });
+      w.send({ t: 'notify', sessionId: OUT, title: 'out', reason: 'finished', detail: null });
+      await recorded(w.page, (r) => r.made.length === 3, 'three notifications');
+      const moreLines = async (): Promise<string[]> =>
+        w.page.evaluate(() =>
+          [...document.querySelectorAll('#list .list-more')].map((line) => line.textContent ?? ''),
+        );
+      assert.deepEqual(await moreLines(), [
+        '+1 more in test · 1 needs you',
+        '+1 more in orb · 1 needs you',
+      ]);
+
+      for (const [index, id, left] of [
+        [0, S2, ['+1 more in orb · 1 needs you']],
+        [1, S3, ['+1 more in test · 1 needs you']],
+      ] as const) {
+        const from = w.sent.length;
+        await clearKeyMessage(w.page);
+        await clickNotification(w.page, index);
+        await eventually(async () => sentWith(w.sent.slice(from), 'view', id), `a view with ${id}`);
+        await w.page.waitForFunction(
+          (id) =>
+            document.querySelector('#list [data-selected="true"]')?.getAttribute('data-id') === id,
+          id,
+          { timeout: PAGE_WAIT_MS },
+        );
+        assert.deepEqual(await moreLines(), [...left], `${id}'s block is open`);
+        assert.equal(await shownText(w.page, '#key-message'), '', 'nothing refused');
+      }
+
+      // An id the list neither draws nor holds in `needYou.order`, with no terminal: refused.
       const from = w.sent.length;
-      await clearKeyMessage(w.page);
-      await clickNotification(w.page, 0);
-      await eventually(
-        async () => sentWith(w.sent.slice(from), 'view', S2),
-        'a view that selects beta',
-      );
-      await w.page.waitForFunction(
-        (id) =>
-          document.querySelector('#list [data-selected="true"]')?.getAttribute('data-id') === id,
-        S2,
-        { timeout: PAGE_WAIT_MS },
-      );
-      assert.equal(await shownText(w.page, '#list .list-more'), '', 'the block is open');
-      assert.equal(await shownText(w.page, '#key-message'), '', 'nothing refused');
+      await clickNotification(w.page, 2);
+      await showsText(w.page, '#key-message', /^that session is hidden by the filter or the fold$/);
+      assert.equal(await selectedRow(w.page), S3, 'the selection stays');
+      assert.equal(sentWith(w.sent.slice(from), 'view', OUT), false, 'no view selects it');
       assert.deepEqual(w.problems, []);
     },
   );

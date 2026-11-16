@@ -40,7 +40,7 @@ import {
   toZone,
 } from './helpers/shell.ts';
 import type { Launched } from './helpers/shell.ts';
-import { resumeHere, until } from './helpers/terminal.ts';
+import { inputOf, resumeHere, until } from './helpers/terminal.ts';
 
 const S4 = '3e8c6f4b-1a5d-4c9e-8f6a-5b4c3d2e1f0a';
 const S5 = '4f9d7a5c-2b6e-4d0f-9a7b-6c5d4e3f2a1b';
@@ -624,7 +624,7 @@ test('search and stacks in the list', async (t) => {
   );
 
   await t.test(
-    'a block: three sessions of ORB-1 in This week → OPEN by default: the head with ×3, the members indented, no line; ← on the head → closed, the line `+2 more in ORB-1`; ↓ from a closed head skips its members and the line; → on the head → open; ← on a member → the head selected and the block closed; a click on the line → open; ← → on a row in no block fold and unfold Earlier as before; a click on ×3 closes and opens, and with a member selected selects the head first',
+    'a block: three sessions of ORB-1 in This week → OPEN by default: the head with ×3, the members indented, no line; ← on the head → closed, the line `+2 more in ORB-1`; ↓ from a closed head skips its members and the line; → on the head → open; ← on a member → the head selected and the block closed; a click on the line → open; ← → on a row in no block fold and unfold Earlier as before; a click on ×3 closes and opens, and with a member selected leaves the block open, the selection where it was and says why',
     async (t) => {
       const l = await launchedWithViews(t, chromium);
       const { page, d } = l;
@@ -718,15 +718,24 @@ test('search and stacks in the list', async (t) => {
       await untilRows(page, [S1, S2, S3, S4], 'a click on ×3 opens');
       assert.equal(await selectedRow(page), S4);
 
-      // With a member selected, a click on ×3 that closes the block selects the head first.
+      // With a member selected, a click on ×3 does not close the block: the selection stays and
+      // the key bar says why (ruled 2026-11-16); ← on the member selects the head and closes it.
       await page.locator(`#list [data-id="${S3}"]`).click();
       await untilSelected(page, S3);
+      const views = (await sentViews(page)).length;
       await page.locator(`#list [data-id="${S1}"] .row-stack`).click();
-      await untilRows(page, [S1, S4], 'closed with its member selected');
+      await showsText(
+        page,
+        '#key-message',
+        /^this block holds the selected session; it stays open$/,
+      );
+      assert.deepEqual(await rowIds(page), [S1, S2, S3, S4], 'still open');
+      assert.equal(await selectedRow(page), S3);
+      assert.equal((await sentViews(page)).length, views, 'no view');
+      await page.keyboard.press('ArrowLeft');
+      await untilRows(page, [S1, S4], '← on the member closes it');
       assert.equal(await selectedRow(page), S1);
       await untilClosed(page, shut('week', 'ORB-1'));
-      await sleep(500);
-      assert.deepEqual(await rowIds(page), [S1, S4], 'and it stays closed');
       await healthy(page, l.problems);
     },
   );
@@ -944,6 +953,133 @@ test('search and stacks in the list', async (t) => {
       await untilSelected(page, S2);
       await untilRows(page, [S1, S2, S3], 'open for the pick');
       await untilClosed(page, []);
+      await healthy(page, l.problems);
+    },
+  );
+
+  await t.test(
+    "a click on `×n` while a member other than the head is selected never moves the selection: from that member's terminal the block stays open, the key bar says why, nothing is sent, and what is typed next reaches the MEMBER's program; with the head selected the click closes it (ruled 2026-11-16)",
+    async (t) => {
+      const l = await launchedWithViews(t, chromium);
+      const { page, d } = l;
+      for (const id of [S1, S2, S3]) {
+        d.resumable(id);
+        setGroup(d.deck, id, 'test');
+      }
+      for (const id of [S1, S2, S3]) {
+        await resumeHere(page, id);
+      }
+      await untilRows(page, [S1, S2, S3], 'the open block under Open');
+      // The member S2's terminal has the keyboard (a click on a running row).
+      await page.locator(`#list [data-id="${S2}"]`).click();
+      await untilSelected(page, S2);
+      await page.waitForFunction(
+        () => document.getElementById('terminal')?.contains(document.activeElement) === true,
+        null,
+        { timeout: PAGE_WAIT_MS },
+      );
+      const term2 = termOf(l, S2);
+      assert.equal(
+        await page.evaluate(() => document.getElementById('right-zone')?.dataset['paneTerm']),
+        term2,
+      );
+      const views = (await sentViews(page)).length;
+      await mark(page, 'refused');
+      await page.locator(`#list [data-id="${S1}"] .row-stack`).click();
+      await showsText(
+        page,
+        '#key-message',
+        /^this block holds the selected session; it stays open$/,
+      );
+      assert.deepEqual(await rowIds(page), [S1, S2, S3], 'the block stays open');
+      assert.equal(await selectedRow(page), S2, 'the selection stays');
+      assert.equal(
+        await page.evaluate(() => document.getElementById('right-zone')?.dataset['paneTerm']),
+        term2,
+        'the right side stays',
+      );
+      assert.equal((await sentViews(page)).length, views, 'no view');
+      assert.deepEqual(
+        (await sentAfter(page, 'refused')).filter((type) => type !== 'input' && type !== 'ping'),
+        [],
+        'nothing but input sent',
+      );
+      const before2 = inputOf(d.record, S2);
+      const before1 = inputOf(d.record, S1);
+      await page.keyboard.type('typedafterclose');
+      const typed = Buffer.from('typedafterclose', 'utf8').toString('hex');
+      await until(() => inputOf(d.record, S2).slice(before2.length).includes(typed), 'S2 read it');
+      assert.equal(inputOf(d.record, S1), before1, "nothing reached the head's program");
+
+      // The guard lets go: with the head selected, the click closes the block.
+      await page.locator(`#list [data-id="${S1}"]`).click();
+      await untilSelected(page, S1);
+      await page.locator(`#list [data-id="${S1}"] .row-stack`).click();
+      await untilRows(page, [S1], 'closed with the head selected');
+      await untilClosed(page, shut('open', 'test'));
+      assert.equal(await selectedRow(page), S1);
+      await healthy(page, l.problems);
+    },
+  );
+
+  await t.test(
+    'one group in two sections is two blocks, remembered each on its own: closing one leaves the other open, opening one leaves the other closed, a selection that opens one leaves the other closed; `×n` on one with a member of the other selected closes it and leaves the selection (review 2, S4)',
+    async (t) => {
+      const l = await launchedWithViews(t, chromium);
+      const { page, d } = l;
+      for (const id of [S1, S2]) {
+        d.resumable(id);
+        setGroup(d.deck, id, 'test');
+      }
+      for (const id of [S1, S2]) {
+        await resumeHere(page, id);
+      }
+      await until(
+        () => l.server.hub.list().every((term) => term.sessionId === term.expectedSessionId),
+        'the two programs reported their sessions',
+      );
+      session(d, S3, 1n * MIN, 'week three');
+      session(d, S4, 2n * MIN, 'week four');
+      setGroup(d.deck, S3, 'test');
+      setGroup(d.deck, S4, 'test');
+      const shape = async (): Promise<string> =>
+        (await lines(page)).map((line) => `${line.section}:${line.kind}:${line.id}`).join(' ');
+      const both = (open: boolean, week: boolean): string =>
+        [
+          `open:row:${S1}`,
+          open ? `open:row:${S2}` : `open:more:${S1}`,
+          `week:row:${S3}`,
+          week ? `week:row:${S4}` : `week:more:${S3}`,
+        ].join(' ');
+      await until(async () => (await shape()) === both(true, true), 'two open blocks');
+      assert.equal(await selectedRow(page), S2, "Open's member, from its resume");
+
+      // `×2` on This week's block with Open's member selected: closed, the selection stays.
+      await page.locator(`#list [data-id="${S3}"] .row-stack`).click();
+      await until(async () => (await shape()) === both(true, false), "This week's closed");
+      await untilClosed(page, shut('week', 'test'));
+      assert.equal(await selectedRow(page), S2, 'the selection stays');
+
+      // Open's closed too (its head selected first): two entries, one per section.
+      await page.locator(`#list [data-id="${S1}"]`).click();
+      await untilSelected(page, S1);
+      await page.locator(`#list [data-id="${S1}"] .row-stack`).click();
+      await until(async () => (await shape()) === both(false, false), 'both closed');
+      await untilClosed(page, [...shut('week', 'test'), ...shut('open', 'test')]);
+
+      // Opening This week's leaves Open's closed.
+      await page.locator(`#list .list-more[data-head="${S3}"]`).click();
+      await until(async () => (await shape()) === both(false, true), "This week's open");
+      await untilClosed(page, shut('open', 'test'));
+
+      // A selection that opens Open's (a slot chord of its hidden member) leaves This week's closed.
+      await page.locator(`#list [data-id="${S3}"] .row-stack`).click();
+      await until(async () => (await shape()) === both(false, false), 'both closed again');
+      await untilClosed(page, [...shut('open', 'test'), ...shut('week', 'test')]);
+      await page.keyboard.press('Control+Shift+Digit2');
+      await untilSelected(page, S2);
+      await until(async () => (await shape()) === both(true, false), "Open's opened by the chord");
+      await untilClosed(page, shut('week', 'test'));
       await healthy(page, l.problems);
     },
   );

@@ -46,6 +46,7 @@ import { moreNeedText, moreText, stackBadge } from './search-text.js';
  * @property {(id: string, how: 'click' | 'key') => void} select
  * @property {(id: string) => void} activate
  * @property {(change: ViewChange) => void} view
+ * @property {(text: string) => void} [say] a line for the key bar (a refused click, F3)
  */
 
 /** The marks a row can show, each in an element of its own (list-text.js's kinds). */
@@ -59,6 +60,8 @@ const SEARCH_CHIPS = /** @type {const} */ (['running', 'open-pr', 'note']);
 /** E6: the most entries a view's `closed` holds (the parser's MAX_CLOSED; web/ imports only types
  *  from src/, so the page holds the number itself). */
 const MAX_CLOSED = 64;
+/** Ruled 2026-11-16 (review 2 of F3): what a click on `×n` that would move the selection says. */
+const HOLDS_SELECTED = 'this block holds the selected session; it stays open';
 /** S2 8.2.3: a text of a view is at most 1,024 bytes of UTF-8 and well formed. */
 const TEXT_BYTES = 1024;
 const utf8 = new TextEncoder();
@@ -525,7 +528,11 @@ export function createList(root, hooks) {
   };
 
   /**
-   * A click on a head's `×4` or on its `+3 more` line (E7): opens the block, or closes it.
+   * A click on a head's `×4` or on its `+3 more` line (E7): opens the block, or closes it. A click
+   * never moves the selection (ruled 2026-11-16): while a member other than the head is selected —
+   * as the page selects and draws it now —, a click that would close the block leaves it open and
+   * the key bar says why (closing would select the head, and from the terminal zone the head's
+   * terminal would take the keyboard); ← in the list still selects the head and closes (E7).
    * @param {string} head the head's session id
    */
   const toggleStack = (head) => {
@@ -534,11 +541,22 @@ export function createList(root, hooks) {
     if (place === undefined || stack === null || stack.role !== 'head') {
       return;
     }
-    if (stack.open) {
-      closeBlock(place.section, stack.group);
-    } else {
+    if (!stack.open) {
       openBlock(place.section, stack.group);
+      return;
     }
+    const chosen = placeOf(selected);
+    const member = chosen?.row.stack ?? null;
+    if (
+      chosen?.section === place.section &&
+      member !== null &&
+      member.role === 'member' &&
+      member.group === stack.group
+    ) {
+      hooks.say?.(HOLDS_SELECTED);
+      return;
+    }
+    closeBlock(place.section, stack.group);
   };
 
   /**
