@@ -32,7 +32,7 @@
 // Order at load (S2 8.2.2): the launch token leaves the address first, before anything can open a
 // connection; then the stored key is read; then the connection opens.
 
-/** @import { ExitMessage, ListMessage, ResultMessage, RowPayload, SearchChip, SectionPayload, ServerMessage, SwitchItem, TerminalPayload, WelcomeMessage } from '../src/window/protocol.ts' */
+/** @import { ClosedBlock, ExitMessage, ListMessage, ResultMessage, RowPayload, SearchChip, SectionPayload, ServerMessage, SwitchItem, TerminalPayload, WelcomeMessage } from '../src/window/protocol.ts' */
 /** @import { EditWhat, ListAction, WindowChord, Zone } from './keys.js' */
 /** @import { Change } from './connection.js' */
 /** @import { Pane } from './pane.js' */
@@ -141,7 +141,7 @@ const state = {
     unfolded: /** @type {string[]} */ ([]),
     showDone: false,
     chips: /** @type {SearchChip[]} */ ([]),
-    opened: /** @type {string[]} */ ([]),
+    closed: /** @type {ClosedBlock[]} */ ([]),
     /** E8: the switcher's text while it is shown, null while it is not. @type {string | null} */
     switcher: /** @type {string | null} */ (null),
   },
@@ -570,7 +570,7 @@ function cutTo(text, bytes) {
  * connection for it), and to E3's 16 words: a longer one is cut to its first 1,024 bytes, then
  * after its 16th word (`cutWords`, as the server reads it). The key bar says so for the filter
  * (`the filter is cut to its first 1,024 bytes`, `… 16 words`); for the switcher its footer does.
- * @param {{ filter?: string, unfolded?: string[], showDone?: boolean, chips?: SearchChip[], opened?: string[], switcher?: string | null }} change
+ * @param {{ filter?: string, unfolded?: string[], showDone?: boolean, chips?: SearchChip[], closed?: ClosedBlock[], switcher?: string | null }} change
  */
 function changeView(change) {
   let next = change;
@@ -915,8 +915,8 @@ function switcherClosed() {
  * the filter was cleared; then the row is selected and gets what Enter on it in the list does —
  * stage A's `activate`, applied to the switcher's row, since the sections may not hold it yet: a
  * terminal of the window or a session elsewhere is shown, one that is not running is resumed into
- * the window (a refusal shows on its card). A closed stack needs nothing (E6: the server opens it
- * for its selected member).
+ * the window (a refusal shows on its card). A closed block needs nothing (G5: the server opens it
+ * for its selected member, and the list then forgets that the user closed it).
  * @param {SwitchItem} item
  */
 function switcherPick(item) {
