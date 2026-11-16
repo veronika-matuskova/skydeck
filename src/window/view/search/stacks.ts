@@ -17,6 +17,10 @@ export interface StackEntry {
   readonly group: string | null;
   /** The row needs you (its `attention` is not null, stage B): a closed block counts it (G5). */
   readonly needsYou: boolean;
+  /** The row is drawn with a terminal of the window that has not reported a session (S2 7.5: a
+   *  start, or a program that ended before it reported): a closed block that holds it as a member
+   *  is drawn open, so that the row, and its slot, are on screen (ruled 2026-11-16, review 2). */
+  readonly unreported: boolean;
 }
 
 /**
@@ -26,10 +30,12 @@ export interface StackEntry {
  * members left out. A group with one row is no block. `stack` is null for a row in no block.
  *
  * Every row of a group belongs to its block, one that a terminal of the window holds or that needs
- * you too (G2). A block is open unless `closed` holds an entry of `section` with its group, or
- * while the selected session is one of its members other than the head (G5: the page then forgets
- * that it closed it, so that the selection is never on a row the list does not show, however it got
- * there). A closed block's `hiddenNeedYou` counts the members it hides that need you.
+ * you too (G2). A block is open unless `closed` holds an entry of `section` with its group; and it
+ * is open, whatever `closed` says, while the selected session is one of its members other than the
+ * head (G5: the page then forgets that it closed it, so that the selection is never on a row the
+ * list does not show, however it got there) or while one of those members is `unreported` (its
+ * terminal has not reported a session, so its slot names none: the row stays on screen). A closed
+ * block's `hiddenNeedYou` counts the members it hides that need you.
  *
  * `closed` is `view.closed` as it comes: absent or empty, every block is open. Groups are compared
  * as the text the entries carry (the row's group is sanitised when step 1's list model is built).
@@ -74,7 +80,8 @@ export function stackRows<T extends StackEntry>(
       continue; // a member: drawn right after its head while the block is open, else left out
     }
     const members = block.rows.slice(1);
-    const isOpen = !shut.has(group) || members.some((member) => member.id === selected);
+    const isOpen =
+      !shut.has(group) || members.some((member) => member.id === selected || member.unreported);
     const payload = (role: StackPayload['role']): StackPayload => ({
       group,
       size: block.rows.length,

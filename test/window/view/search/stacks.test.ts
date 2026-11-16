@@ -10,8 +10,8 @@ interface Entry extends StackEntry {
   readonly own: string;
 }
 
-function entry(id: string, group: string | null, needsYou = false): Entry {
-  return { id, group, needsYou, own: `own-${id}` };
+function entry(id: string, group: string | null, needsYou = false, unreported = false): Entry {
+  return { id, group, needsYou, unreported, own: `own-${id}` };
 }
 
 type Section = SectionPayload['name'];
@@ -234,8 +234,14 @@ test('stackRows: a repeated closed entry is as once; one naming a group of one r
   assert.deepEqual(
     stackRows([entry('b1', 'H'), entry('x', null)], 'week', shut('week', 'H', 'NOPE'), null),
     [
-      { entry: { id: 'b1', group: 'H', needsYou: false, own: 'own-b1' }, stack: null },
-      { entry: { id: 'x', group: null, needsYou: false, own: 'own-x' }, stack: null },
+      {
+        entry: { id: 'b1', group: 'H', needsYou: false, unreported: false, own: 'own-b1' },
+        stack: null,
+      },
+      {
+        entry: { id: 'x', group: null, needsYou: false, unreported: false, own: 'own-x' },
+        stack: null,
+      },
     ],
   );
 });
@@ -303,6 +309,27 @@ test('stackRows: the selection opens only the block it is in; a row of another g
   ]);
 });
 
+test('stackRows: a member whose terminal has not reported a session opens its closed block, whatever closed says (ruled 2026-11-16, review 2 of F3)', () => {
+  const rows = [entry('a1', 'G'), entry('a2', 'G'), entry('u', 'G', false, true), entry('x', null)];
+  for (const section of SECTIONS) {
+    const drawn = stackRows(rows, section, shut(section, 'G'), null);
+    assert.deepEqual(shape(drawn), ['a1^', 'a2<', 'u<', 'x'], section);
+    assert.ok(
+      drawn.slice(0, 3).every(({ stack }) => stack?.open === true && stack.hiddenNeedYou === 0),
+    );
+  }
+  // The head unreported opens nothing: it is drawn anyway.
+  const head = [entry('u', 'G', false, true), entry('a1', 'G')];
+  assert.deepEqual(shape(stackRows(head, 'week', shut('week', 'G'), null)), ['u^']);
+  // Another block's unreported member opens only its own block.
+  const two = [entry('a1', 'G'), entry('a2', 'G'), entry('b1', 'H'), entry('u', 'H', false, true)];
+  assert.deepEqual(shape(stackRows(two, 'open', shut('open', 'G', 'H'), null)), [
+    'a1^',
+    'b1^',
+    'u<',
+  ]);
+});
+
 // --- the input -----------------------------------------------------------------------------------
 
 test('stackRows: nothing of the input is changed in place', () => {
@@ -354,12 +381,24 @@ function random(seed: number): () => number {
 
 test("stackRows: the section's order is kept, a member right after its head; nothing twice, nothing lost unseen", () => {
   const groups = ['A', 'B', 'C', 'D', null];
-  const seen = { closed: 0, members: 0, needing: 0, bySelection: 0, otherSection: 0 };
+  const seen = {
+    closed: 0,
+    members: 0,
+    needing: 0,
+    bySelection: 0,
+    byUnreported: 0,
+    otherSection: 0,
+  };
   for (let seed = 1; seed <= 400; seed += 1) {
     const next = random(seed);
     const count = Math.floor(next() * 14);
     const rows = Array.from({ length: count }, (_, i) =>
-      entry(`s${i}`, groups[Math.floor(next() * groups.length)] ?? null, next() < 0.3),
+      entry(
+        `s${i}`,
+        groups[Math.floor(next() * groups.length)] ?? null,
+        next() < 0.3,
+        next() < 0.1,
+      ),
     );
     const section = SECTIONS[Math.floor(next() * SECTIONS.length)] ?? 'open';
     const closed: ClosedBlock[] = [];
@@ -397,7 +436,7 @@ test("stackRows: the section's order is kept, a member right after its head; not
       const open =
         row.group === null ||
         !closedHere(row.group) ||
-        kin.slice(1).some((member) => member.id === selected);
+        kin.slice(1).some((member) => member.id === selected || member.unreported);
       assert.equal(ids.includes(row.id), !isMember || open, `${why}, row ${index}`);
     }
 
@@ -440,6 +479,15 @@ test("stackRows: the section's order is kept, a member right after its head; not
     seen.bySelection += drawn.some(
       ({ entry: row, stack }) =>
         stack?.role === 'member' && row.id === selected && closedHere(stack.group),
+    )
+      ? 1
+      : 0;
+    seen.byUnreported += drawn.some(
+      ({ entry: row, stack }) =>
+        stack?.role === 'member' &&
+        row.unreported &&
+        row.id !== selected &&
+        closedHere(stack.group),
     )
       ? 1
       : 0;

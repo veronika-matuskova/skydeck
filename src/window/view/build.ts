@@ -254,7 +254,8 @@ function sectionPayload(
 /**
  * E6 for one section (ruled 2026-11-16): the rows drawn, each head and open member with its
  * `stack`; every row of a group is in its block (G2), `closed` is `view.closed` as it comes
- * (absent: every block open).
+ * (absent: every block open); a closed block is drawn open while a member's row is drawn with a
+ * terminal that has not reported a session.
  */
 function stacked(
   name: SectionName,
@@ -262,10 +263,13 @@ function stacked(
   closed: readonly ClosedBlock[] | undefined,
   selected: string | null,
 ): RowPayload[] {
-  const stackable = entries.map(({ payload }) => ({
+  const stackable = entries.map(({ payload, terminal }) => ({
     id: payload.id,
     group: payload.group,
     needsYou: payload.attention !== null,
+    // Ruled 2026-11-16 (review 2): its row's terminal has not reported a session (S2 7.5), so the
+    // terminal's slot names no session for the page: the row stays on screen.
+    unreported: terminal !== null && terminal.sessionId === null,
     payload,
   }));
   return stackRows(stackable, name, closed, selected).map(({ entry, stack }) =>

@@ -616,6 +616,65 @@ test('blocks: a row with an ended terminal of the window and a row that needs yo
   assert.deepEqual(ids(build(shut('week', 'ORB-1'), S2), 'week'), [S1, S2, S3, S4]);
 });
 
+test('blocks: a closed block whose member is drawn with a terminal that has not reported a session is drawn open, so that its row and its slot show (ruled 2026-11-16)', () => {
+  // Open: S1 (slot 1, reported) and S2 (slot 2, started for S2, not reported); This week: S3 and
+  // S4, whose terminal (slot 3) ended before its program reported. All of `test`.
+  const list = rows(
+    [
+      running(S1, { pid: 9001, transcript: { aiTitle: 'one' } }),
+      idle(S2, 'two', MIN),
+      idle(S3, 'three', 2n * MIN),
+      idle(S4, 'four', 3n * MIN),
+    ],
+    {
+      metas: [S1, S2, S3, S4].map((id) => meta(id, { group: 'test' })),
+    },
+  );
+  const terminals = [
+    term(1, { expectedSessionId: S1, slot: 1 }),
+    term(2, { expectedSessionId: S2, sessionId: null, slot: 2, notReported: true }),
+    term(3, { expectedSessionId: S4, sessionId: null, slot: 3, state: 'ended', program: null }),
+  ];
+  const closed = [...shut('open', 'test'), ...shut('week', 'test')];
+  const message = buildListMessage(input({ rows: list, terminals, view: { closed } }));
+  assert.deepEqual(ids(message, 'open'), [S1, S2]);
+  assert.equal(rowIn(message, S2).slot, 2);
+  assert.equal(rowIn(message, S1).stack?.open, true);
+  assert.deepEqual(ids(message, 'week'), [S3, S4]);
+  assert.equal(rowIn(message, S4).slot, 3);
+  assert.equal(rowIn(message, S3).stack?.open, true);
+  // Reported, the block is closed again, as `closed` says.
+  const reported = buildListMessage(
+    input({
+      rows: list,
+      terminals: [terminals[0] as TerminalInfo, term(2, { expectedSessionId: S2, slot: 2 })],
+      view: { closed },
+    }),
+  );
+  assert.deepEqual(ids(reported, 'open'), [S1]);
+  // An unreported head opens nothing (it is drawn anyway); needYou does not move.
+  const head = buildListMessage(
+    input({
+      rows: list,
+      terminals: [term(2, { expectedSessionId: S2, sessionId: null, slot: 2 })],
+      view: { closed },
+    }),
+  );
+  // (S1 runs without a terminal of the window now: Open's order puts S2, the terminal, first.)
+  assert.deepEqual(ids(head, 'open'), [S2]);
+  assert.equal(rowIn(head, S2).stack?.open, false);
+  assert.deepEqual(ids(head, 'week'), [S3]);
+  assert.deepEqual(
+    head.needYou,
+    buildListMessage(
+      input({
+        rows: list,
+        terminals: [term(2, { expectedSessionId: S2, sessionId: null, slot: 2 })],
+      }),
+    ).needYou,
+  );
+});
+
 test('blocks: a filter or a chip flattens every block, in every section', () => {
   const list = rows(
     [
