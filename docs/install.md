@@ -910,7 +910,8 @@ one, and the page closes a session's notification once that session no longer ne
 on one brings the window to the front and selects the session. While a dialog is open it only
 brings the window to the front, and the key bar says `close the edit first (Esc)`. A session the
 list does not show (the filter, the folded Earlier) and that has no terminal in the window is not
-selected: the key bar says `that session is hidden by the filter or the fold`. Whether a
+selected: the key bar says `that session is hidden by the filter or the fold`. A session that a
+closed block hides is selected, terminal or not, and its block opens. Whether a
 notification pops up is also Windows' own business (its Do not disturb, its settings for Edge),
 which skydeck does not touch.
 

@@ -36,6 +36,7 @@ import {
   scriptedList,
   selectedRow,
   showsText,
+  shownText,
   standinServer,
   storeKey,
   TERM_A,
@@ -789,6 +790,64 @@ test('attention in the page', async (t) => {
         'view and focus with gamma',
       );
       await showsText(w.page, '#focus-zone', /^Focus: terminal$/);
+      assert.deepEqual(w.problems, []);
+    },
+  );
+
+  await t.test(
+    'a click on the notification of a session a closed block hides, with no terminal of the window (it runs elsewhere): it is selected and its block opens (F3, G5; one the filter hides stays refused, the case above)',
+    async (t) => {
+      // Open: S1 in the window (slot 1), the head of a block of `test`; S2 runs elsewhere and asks,
+      // a member of that block. While the view closes the block (and S2 is not selected) the list
+      // carries S1 only, with `+1 more in test · 1 needs you`; `needYou.order` holds S2 (G5).
+      const head = (open: boolean): Row => ({
+        group: 'test',
+        size: 2,
+        open,
+        role: 'head',
+        head: S1,
+        hiddenNeedYou: open ? 0 : 1,
+      });
+      const member = running(S2, '', 0, {
+        title: 'beta',
+        terminal: null,
+        slot: null,
+        elsewhere: { pid: 4242, tty: null },
+        attention: attention('asks', 1n),
+        stack: { ...head(true), role: 'member' },
+      });
+      const blockWorld = (view: { filter: string; selected: string | null }): Row => {
+        const open = view.selected === S2; // the server opens the block for its selected member
+        const first = running(S1, TERM_A, 1, { title: 'alpha', stack: head(open) });
+        return listOf({ open: open ? [first, member] : [first] }, [terminal(TERM_A, S1, 1)], {
+          count: 1,
+          order: [S2],
+        });
+      };
+      const w = await attentionWorld(t, chromium, blockWorld, (page) =>
+        notificationDouble(page, 'granted'),
+      );
+      await titleIs(w.page, '(1) skydeck');
+      assert.equal(await selectedRow(w.page), S1);
+      await showsText(w.page, '#list .list-more', /^\+1 more in test · 1 needs you$/);
+      await pageFocus(w.page, false);
+      w.send({ t: 'notify', sessionId: S2, title: 'beta', reason: 'asks', detail: null });
+      await recorded(w.page, (r) => r.made.length === 1, 'the notification');
+      const from = w.sent.length;
+      await clearKeyMessage(w.page);
+      await clickNotification(w.page, 0);
+      await eventually(
+        async () => sentWith(w.sent.slice(from), 'view', S2),
+        'a view that selects beta',
+      );
+      await w.page.waitForFunction(
+        (id) =>
+          document.querySelector('#list [data-selected="true"]')?.getAttribute('data-id') === id,
+        S2,
+        { timeout: PAGE_WAIT_MS },
+      );
+      assert.equal(await shownText(w.page, '#list .list-more'), '', 'the block is open');
+      assert.equal(await shownText(w.page, '#key-message'), '', 'nothing refused');
       assert.deepEqual(w.problems, []);
     },
   );

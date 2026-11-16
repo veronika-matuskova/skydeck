@@ -2929,7 +2929,9 @@ installed app's shortcut would hold no launch token (5.1).
   filter or the fold`, and the selection, the right side and what the page reports stay as they
   were — the pane would be empty, and a focused page's selection is seen after 1.5 s, which would
   clear a mark the user never saw (ruled on review 2 of plan B task 55; showing a selected session
-  the list hides is stage E's). The
+  the list hides is stage E's). A session a closed block hides is selected, also without a terminal
+  of the window, and its block opens (12.2; follow-up F3): `needYou.order` holds it, while it
+  holds no session the filter or the fold leaves out. The
   page closes a session's notification once that session no longer needs you: at a list that holds
   the session's row without attention, or in which nothing needs you (`needYou.count` 0); a session
   the list does not show (the filter, the folded Earlier) keeps its notification until a list shows

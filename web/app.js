@@ -259,13 +259,17 @@ const editor = createEditor(dom.editor, {
 // Stage B (B15): a click on a notification passes the gate of a window chord, then selects. A
 // session this page's list does not show (its filter, the folded Earlier) and that has no terminal
 // of the window is not selected (ruled on review 2): the pane would be empty, and a focused page's
-// selection is seen after 1.5 s (S2 12.4), which would clear a mark of a session never shown.
+// selection is seen after 1.5 s (S2 12.4), which would clear a mark of a session never shown. One
+// that a closed block hides is selected (F3, G5): `needYou.order` holds it — it holds the rows the
+// list shows and those closed blocks hide, never one a filter, the fold or done hidden leaves out —,
+// and the server opens its block for the selection.
 const notifications = createNotifications(dom.notifyOn, {
   select: (id) => {
     if (!windowChordGate('notification')) {
       return;
     }
-    if (rowOf(id) === undefined && !hasTerminal(id)) {
+    const inBlock = state.list?.needYou?.order?.includes(id) ?? false;
+    if (rowOf(id) === undefined && !hasTerminal(id) && !inBlock) {
       say('that session is hidden by the filter or the fold');
       return;
     }

@@ -50,16 +50,22 @@
   margin-left: 26px;
 }
 
-/* A closed block's `+3 more in ORB-2107` line: no row, a click opens the block. */
+/* A closed block's `+3 more in ORB-2107` line: no row, a click opens the block. One line: a
+   long group gives way (its text ends in an ellipsis), never ` · 1 needs you` after it. */
 .list-more {
+  display: flex;
   overflow: hidden;
   padding: 1px 10px 3px 38px;
   color: var(--faint);
   font-size: 12px;
-  text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
+}
+.list-more .more-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .list-more:hover {
   color: var(--text);
@@ -67,7 +73,9 @@
 /* G5 (ruled 2026-11-16): its part ` · 1 needs you` while members it hides need you, in the colour
    of the title bar's `need you` count; no bar and no bold, which stay a row's marks. */
 .list-more .more-need {
+  flex: none;
   color: var(--need);
+  white-space: pre; /* a flex item would drop its leading space */
 }
 
 /* The title bar's `Switch…` (S2 12.8): it opens the switcher, as Ctrl+Shift+P does. */

@@ -1039,6 +1039,54 @@ test('search and stacks in the list', async (t) => {
       await untilRows(page, [S1, S2, S3], 'open for Ctrl+Shift+J');
       await untilClosed(page, []);
       assert.equal((await lines(page)).filter((line) => line.kind === 'more').length, 0);
+
+      // A group too long for the line: the group gives way, ` · 1 needs you` is never cut off
+      // (review 2, S2).
+      const long = `inbox-cleaner-oom-investigation-${'x'.repeat(28)}`; // 60 characters
+      for (const id of [S1, S2, S3]) setGroup(d.deck, id, long);
+      await page.locator(`#list [data-id="${S1}"]`).click();
+      await untilSelected(page, S1);
+      await until(
+        async () =>
+          (await readPage(
+            page,
+            (id) => document.querySelector(`#list [data-id="${id}"] .row-group`)?.textContent ?? '',
+            S1,
+          )) === long,
+        'the long group shown',
+      );
+      await toZone(page, 'list');
+      await page.keyboard.press('ArrowLeft');
+      await untilClosed(page, shut('open', long));
+      await untilLines(
+        page,
+        (drawn) => drawn.some((line) => line.kind === 'more' && line.need === ' · 1 needs you'),
+        'the closed long block',
+      );
+      const fit = await readPage(
+        page,
+        () => {
+          const line = document.querySelector<HTMLElement>('#list .list-more');
+          const text = line?.querySelector<HTMLElement>('.more-text');
+          const need = line?.querySelector<HTMLElement>('.more-need');
+          if (line == null || text == null || need == null) return null;
+          const box = line.getBoundingClientRect();
+          const style = getComputedStyle(line);
+          const inner = {
+            left: box.left + parseFloat(style.paddingLeft),
+            right: box.right - parseFloat(style.paddingRight),
+          };
+          const part = need.getBoundingClientRect();
+          return {
+            needInside:
+              part.width > 0 && part.left >= inner.left && part.right <= inner.right + 0.5,
+            textCut: text.scrollWidth > text.clientWidth,
+            needText: need.textContent,
+          };
+        },
+        null,
+      );
+      assert.deepEqual(fit, { needInside: true, textCut: true, needText: ' · 1 needs you' });
       await healthy(page, l.problems);
     },
   );
