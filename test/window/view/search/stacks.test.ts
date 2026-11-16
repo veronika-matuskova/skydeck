@@ -108,7 +108,11 @@ test('stackRows: a group is text, whatever it spells; rows and closed entries na
     const apart = stackRows([entry('a1', one), entry('a2', other)], 'week', NONE, null);
     assert.deepEqual(shape(apart), ['a1', 'a2'], why);
     const same = [entry('a1', one), entry('a2', one)];
-    assert.deepEqual(shape(stackRows(same, 'week', shut('week', other), null)), ['a1^', 'a2<'], why);
+    assert.deepEqual(
+      shape(stackRows(same, 'week', shut('week', other), null)),
+      ['a1^', 'a2<'],
+      why,
+    );
     assert.deepEqual(shape(stackRows(same, 'week', shut('week', one), null)), ['a1^'], why);
   }
 });
@@ -227,10 +231,13 @@ test('stackRows: a view without `closed`, and an empty one, close nothing: every
 test('stackRows: a repeated closed entry is as once; one naming a group of one row, or none, changes nothing', () => {
   const rows = [entry('a1', 'G'), entry('a2', 'G'), entry('b1', 'H')];
   assert.deepEqual(shape(stackRows(rows, 'week', shut('week', 'G', 'G'), null)), ['a1^', 'b1']);
-  assert.deepEqual(stackRows([entry('b1', 'H'), entry('x', null)], 'week', shut('week', 'H', 'NOPE'), null), [
-    { entry: { id: 'b1', group: 'H', needsYou: false, own: 'own-b1' }, stack: null },
-    { entry: { id: 'x', group: null, needsYou: false, own: 'own-x' }, stack: null },
-  ]);
+  assert.deepEqual(
+    stackRows([entry('b1', 'H'), entry('x', null)], 'week', shut('week', 'H', 'NOPE'), null),
+    [
+      { entry: { id: 'b1', group: 'H', needsYou: false, own: 'own-b1' }, stack: null },
+      { entry: { id: 'x', group: null, needsYou: false, own: 'own-x' }, stack: null },
+    ],
+  );
 });
 
 // --- G5: a closed block never hides that a session needs you, or the selection -------------------
@@ -279,11 +286,21 @@ test('stackRows: a selected head leaves its block as closed says', () => {
 });
 
 test('stackRows: the selection opens only the block it is in; a row of another group or none opens nothing', () => {
-  const rows = [entry('a1', 'G'), entry('a2', 'G'), entry('b1', 'H'), entry('b2', 'H'), entry('x', null)];
+  const rows = [
+    entry('a1', 'G'),
+    entry('a2', 'G'),
+    entry('b1', 'H'),
+    entry('b2', 'H'),
+    entry('x', null),
+  ];
   const closed = shut('week', 'G', 'H');
   assert.deepEqual(shape(stackRows(rows, 'week', closed, 'b2')), ['a1^', 'b1^', 'b2<', 'x']);
   assert.deepEqual(shape(stackRows(rows, 'week', closed, 'x')), ['a1^', 'b1^', 'x']);
-  assert.deepEqual(shape(stackRows(rows, 'week', closed, 'not-in-this-section')), ['a1^', 'b1^', 'x']);
+  assert.deepEqual(shape(stackRows(rows, 'week', closed, 'not-in-this-section')), [
+    'a1^',
+    'b1^',
+    'x',
+  ]);
 });
 
 // --- the input -----------------------------------------------------------------------------------
@@ -363,7 +380,9 @@ test("stackRows: the section's order is kept, a member right after its head; not
     assert.equal(new Set(ids).size, ids.length, why);
 
     // The rows that are not members are in the section's order.
-    const placed = drawn.filter(({ stack }) => stack?.role !== 'member').map(({ entry: r }) => r.id);
+    const placed = drawn
+      .filter(({ stack }) => stack?.role !== 'member')
+      .map(({ entry: r }) => r.id);
     assert.deepEqual(
       placed,
       [...placed].sort((a, b) => at(a) - at(b)),

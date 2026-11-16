@@ -690,7 +690,24 @@ const CHIP: Check = (value, where) => {
   return Object.hasOwn(CHIPS, value) ? null : `${where}: wrong value`;
 };
 const VIEW_CHIPS = list(CHIP, false, true, Object.keys(CHIPS).length);
-const OPENED = list(TEXT, false, true, MAX_OPENED);
+const CLOSED_ENTRY = object({ section: oneOf('open', 'week', 'earlier'), group: TEXT });
+/** E6 (ruled 2026-11-16): at most MAX_CLOSED entries, each exactly a section and a text, each
+ *  section and group once. */
+const CLOSED: Check = (value, where) => {
+  if (!Array.isArray(value)) return `${where}: wrong type`;
+  if (value.length > MAX_CLOSED) return `${where}: too long`;
+  const seen = new Map<string, Set<string>>();
+  for (const one of value as unknown[]) {
+    const problem = CLOSED_ENTRY(one, where);
+    if (problem !== null) return problem;
+    const { section, group } = one as ClosedBlock;
+    const groups = seen.get(section) ?? new Set<string>();
+    if (groups.has(group)) return `${where}: wrong value`;
+    groups.add(group);
+    seen.set(section, groups);
+  }
+  return null;
+};
 
 const AREA = object({ cols: SIZE, rows: SIZE });
 
@@ -753,10 +770,10 @@ const MESSAGES: Readonly<Record<string, Check>> = {
       selected: nullable(SESSION),
       // Stage E (plan E 2.3), each optional: a page before stage E sends none of them.
       chips: VIEW_CHIPS,
-      opened: OPENED,
+      closed: CLOSED,
       switcher: nullable(TEXT),
     },
-    ['chips', 'opened', 'switcher'],
+    ['chips', 'closed', 'switcher'],
   ),
   focus: object({ t: ANY, focused: BOOLEAN, selected: nullable(SESSION), area: AREA }),
   attach: object({ t: ANY, term: TERM, cols: SIZE, rows: SIZE }),
