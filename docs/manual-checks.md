@@ -11,8 +11,9 @@ and W21 check which sessions need you and the desktop notifications (stage B), a
 "The window (step 2, stage C)"; W30, W31 and W3's icon check search, the quick switcher and the
 page's icon (stage E), at "The window (step 2, stage E)"; W32 checks `skydeck update` (follow-up
 F8), at "Updating skydeck"; W33 checks install's offer to turn off Claude Code's ← shortcut
-(follow-up F11), at "Claude Code's ← shortcut"; W35 checks the flags a session was started with in
-the header (follow-up F16), at "The flags a session was started with".
+(follow-up F11), at "Claude Code's ← shortcut"; W34 checks the title bar's theme switch (follow-up
+F13), at "The window's theme"; W35 checks the flags a session was started with in the header
+(follow-up F16), at "The flags a session was started with".
 
 Setup:
 
@@ -459,10 +460,11 @@ Three questions about how Claude Code talks to the terminal skydeck gives it.
   supports it). If Claude Code asks before it uses it, a 0 in a terminal that does not support it
   says nothing about the window. Write down which terminal W is, with its version.
 - **Does the colour answer make its automatic theme right?** When your Claude Code has a theme
-  that follows the terminal (look in `/config` or `/theme`), choose it. The window is dark while
-  Windows is in dark mode and light in light mode (Settings > Personalization > Colors). Start a new
-  throwaway session in the window in each mode, after a click into the window: Claude Code should
-  pick the matching theme.
+  that follows the terminal (look in `/config` or `/theme`), choose it. While the title bar's theme
+  switch shows `◐ Auto` (follow-up F13; click it until it does, and click it back to what it showed
+  at the end), the window is dark while Windows is in dark mode and light in light mode (Settings >
+  Personalization > Colors); W34 tries `Light` and `Dark`. Start a new throwaway session in the
+  window in each mode, after a click into the window: Claude Code should pick the matching theme.
 - **An XTVERSION answer** (`xterm.js(6.0.0)`) would make Claude Code treat the terminal as xterm.js
   (design-step-2.md, 9.3). That is a change of skydeck's code, for a branch, not for this check:
   write down only whether wheel scrolling and link clicks in the window behave as you expect.
@@ -1999,6 +2001,118 @@ Not tried before this check was written: all of it. The tests run install and do
 files in a sandbox and never start `claude`; what Claude Code does with ← once the key is `false`,
 and whether a session that was running writes its older copy of the file back, are known from its
 documentation only (design.md 14), or not at all.
+
+## The window's theme
+
+The check of the title bar's theme switch (follow-up F13; design-step-2.md 12.1, 7.2, 9.3): W34,
+in your own window. The switch is a small button right before `Switch…`: a half circle and `Auto`
+(the window follows Windows' light or dark mode, as before), `Light` or `Dark`; each click goes to
+the next, in this order: Auto → Light → Dark → Auto. **It changes one setting of the window on
+purpose**: the switch's choice, which the window keeps in its own Edge profile (not in any file of
+yours); the setup writes down what it shows, and the end puts it back. Steps 5 and 6 are optional:
+step 5 changes Windows' mode for the whole desktop, and step 6 may change Claude Code's theme
+through its own `/theme`; each says how to put it back. No step reads or writes a file of Claude
+Code's (`~/.claude.json` holds your account details): its theme is looked at in `/theme`. Nothing
+here sends a prompt: the only text typed into a terminal is `/theme` and `/exit`, and only into a
+new throwaway session.
+
+## W34. Light, dark or the system's (real claude)
+
+Setup: skydeck updated to a commit that has follow-up F13 (`skydeck update`, W32); the window open,
+as you work with it. Write down two things:
+
+- what the switch shows: `◐ Auto`, `◐ Light` or `◐ Dark` (hold the mouse over it: the tooltip says
+  `Theme: follows the system. Click for light.`, `Theme: light. Click for dark.` or `Theme: dark.
+  Click to follow the system.`);
+- Windows' mode: Settings > Personalization > Colors, "Choose your mode" (Light, Dark or Custom;
+  for Custom, "Choose your default app mode").
+
+Then click the switch until it shows `◐ Auto` (from `Light` two clicks, from `Dark` one).
+
+1. **Auto.** Expected: the window is light while Windows' app mode is Light and dark while it is
+   Dark, as before F13: the list, the header, the key bar and the terminal of the selected session.
+   Before each click of this check, look at the key bar (`Focus: list` or `Focus: terminal`), and
+   after it look that it says the same: a click on the switch moves no keyboard.
+2. **Auto → Light.** Click the switch once. Expected: it shows `◐ Light`, and at once the whole
+   window is light — the list, the header, the key bar, the scroll bars, and every terminal: a
+   light background with dark text, the sixteen colours a program uses (`ls`'s, say) in their light
+   variants. A program's own 24-bit colours stay as they are: a running Claude Code whose theme is
+   not one of its ANSI themes keeps its own theme's colours on the light background, so some of
+   its text may be hard to read until it is drawn in another theme (expected from what its themes
+   are documented to be, not tried; write down what you see). Nothing else moves: the title bar's
+   `Switch…` stays where it was, the selection is the same row. Select another row that has a
+   terminal (one click on its row, no key), and look that its terminal is light too; click back on
+   the row you had.
+3. **Light → Dark.** Click it once more. Expected: `◐ Dark`, and the whole window dark, every
+   terminal too, whatever Windows' mode is.
+4. **It is kept.** With `◐ Dark` shown, press Ctrl+Shift+R (the page's reload, in either zone).
+   Expected: the page loads again dark from its first frame — no frame of the page in light while it
+   loads — and the switch shows `◐ Dark`. Then close the window with its × (closing the window ends
+   no session) and, in W, `skydeck window`. Before the page's first frame Edge shows its own empty
+   window, in Windows' mode: with Windows in Light mode it may be light for a moment, which is
+   Edge's and not the page's (the page cannot change it). Expected: the page itself is dark from its
+   first frame, `◐ Dark`. Write down, for each load, whether anything flashed light, and which it
+   was: Edge's empty window (nothing of the page in it), or a frame of the page (its title bar or
+   its list in light).
+5. **Optional: Windows' mode.** Only when you may change it for a minute: in Settings >
+   Personalization > Colors set the app mode to the other one (Light ↔ Dark). Expected while the
+   switch shows `◐ Dark`: the window stays dark. Click the switch once (**Dark → Auto**): it shows
+   `◐ Auto`, and the window follows Windows' mode of the moment. Set Windows' mode back to what you
+   wrote down: at `Auto` the window follows at once. Then click once more (**Auto → Light**): the
+   window is light whatever Windows says.
+6. **Optional: Claude Code's theme.** This step needs Claude Code's theme to be "Auto (match
+   terminal)"; the setting is looked at in a throwaway session.
+   - **A new throwaway session.** Click the switch until it shows `◐ Light` (from `Dark` two
+     clicks, from `Auto` one). In the window press Ctrl+Shift+N. The right side shows the form for
+     a new session, its first field the directory, with the cursor in it; when the form does not
+     show, or the cursor is not in that field, type nothing: press Ctrl+Shift+N again, or click
+     into the field. Press Ctrl+A in the field, type the throwaway folder's full path over its text
+     (`/home/<you>/skydeck-try`), leave the other fields empty, and press Enter only when the field
+     holds exactly that path. **Type no prompt into the new session.** Look that it is the new one:
+     the header shows its short id and "opened" a moment ago, `skydeck-try` as its folder, and its
+     terminal shows Claude Code's empty prompt. Look that its terminal has the keyboard: the key bar
+     says `Focus: terminal` (else Ctrl+Shift+L until it does).
+   - **Its theme.** Only then type `/theme` and Enter. Claude Code shows its themes, the current
+     one marked; write down its name. When the list has no "Auto (match terminal)" (an older
+     Claude Code), press Esc and leave out the rest of this step but its end. When the current one
+     is "Auto (match terminal)", press Esc. When it is another one, either press Esc and leave out
+     the rest of this step but its end, or choose "Auto (match terminal)" for this step (it is then
+     your Claude Code's theme until you choose yours again, at the end of this step).
+   - **What it picked, and a switch while it runs.** Expected: Claude Code draws its light theme
+     (dark text on the light terminal). Now click the switch once (**Light → Dark**): the terminal
+     turns dark at once. What Claude Code does then is not documented: its documentation (read
+     2026-11-18) says only "Selecting the auto option detects your terminal's light or dark
+     background, so the theme follows OS appearance changes whenever your terminal does", not how
+     or when it detects. It may keep its light theme (skydeck tells a running program the new
+     colours only when it asks again) or change to its dark one; wait a few seconds, then write
+     down which it does. Then end it: the terminal has the keyboard (`Focus: terminal`) and the
+     header shows the throwaway session's short id; type `/exit`, then `Close` on its ended bar.
+     Start a second throwaway session the same way (the form, the path, no prompt), with `◐ Dark`
+     shown. Expected: Claude Code draws its dark theme from its start (expected, not tried).
+   - **The end of this step.** Look that the header shows the throwaway session's short id and the
+     key bar says `Focus: terminal` (else Ctrl+Shift+L until it does). When you chose "Auto (match
+     terminal)" above, type `/theme` and Enter, choose the theme you wrote down, then `/theme` once
+     more: it is marked as the current one; press Esc. Then type `/exit`, and `Close` on its ended
+     bar.
+7. **The end.** Click the switch until it shows what you wrote down in the setup, and look that the
+   window is as it was. Windows' mode is as the setup wrote it down (step 5 put it back), and
+   Claude Code's theme is the one `/theme` showed in step 6 (its end put it back).
+
+Write down: for steps 1 to 3 whether the window and its terminals were wholly light or dark, what
+a running Claude Code looked like on the light background, and whether the keyboard stayed where
+it was; for step 4, for the reload and the new window, whether anything flashed light and whether
+it was Edge's empty window or a frame of the page, and what the switch showed; for step 5, whether
+the window followed Windows at `Auto` and not at `Dark` or `Light`; for step 6, Claude Code's theme
+in `/theme`, the theme it drew in each new session, and whether the running one changed after the
+switch.
+
+Not tried before this check was written: all of it in Edge and with a real Claude Code. The page
+suite checks the switch in headless Chromium with the system's scheme emulated (the computed colours
+of every variable in each state, the terminals' colours, the reload frame by frame, a second page of
+the profile), and the answers to OSC 10 and 11 with the stand-in program's questions; how Edge
+draws its window before the page's first frame, how Windows' mode reaches Edge, and what Claude
+Code's "Auto (match terminal)" does with the answers (when it asks, and whether again during a
+session) are known from nothing but this check.
 
 ## The flags a session was started with
 
