@@ -13,7 +13,8 @@ page's icon (stage E), at "The window (step 2, stage E)"; W32 checks `skydeck up
 F8), at "Updating skydeck"; W33 checks install's offer to turn off Claude Code's ← shortcut
 (follow-up F11), at "Claude Code's ← shortcut"; W34 checks the title bar's theme switch (follow-up
 F13), at "The window's theme"; W35 checks the flags a session was started with in the header
-(follow-up F16), at "The flags a session was started with".
+(follow-up F16), at "The flags a session was started with"; W36 checks the new form's favourite
+flags (follow-up F15), at "Favourite flags".
 
 Setup:
 
@@ -2181,3 +2182,71 @@ inside the session is not shown: the header says what the session was started wi
 Not tried before this check was written: all of it with the real Claude Code. The tests start the
 stand-in program from the form with the same kind of flags and see them in the header, on the
 ended bar and in "Will run", and measure that nothing else of the line moves at any width.
+
+## Favourite flags
+
+The check of the new form's favourite flags (follow-up F15; design-step-2.md 12.6;
+[install.md](install.md), "A new session"): W36, in the window, with the throwaway folder
+`~/skydeck-try` and one new throwaway session that gets no prompt at all. It saves one favourite of
+its own, `--verbose --model sonnet`, and removes it at its end; a favourite you saved yourself stays
+as it is: the check never clicks the × of a chip whose text is not the check's own. Steps that
+type a command are typed in W, a WSL terminal of your own (never a `!` command inside Claude
+Code).
+
+## W36. Favourite flags in the new form (real claude)
+
+Setup: the window is open, and `mkdir -p ~/skydeck-try` in W. In the window press Ctrl+Shift+N
+(here and below; in a browser tab: the `+ New` button). The right side shows `New session`, the caret in its first field, Directory; when the form does
+not show, press Ctrl+Shift+N again. Under the field "Flags for claude" a row of chips shows the
+favourites you have (no row when there is none); write down how many, and their texts. With 12
+already the form takes no more: write that down and stop (press Esc while the form shows). When
+one of them reads `--verbose --model sonnet` already, use `--verbose --model haiku` everywhere
+below instead. **Press Esc only while the right side shows `New session`**: there it closes the
+form, while in a session's terminal it reaches Claude Code.
+
+1. **Save.** Click into the field "Flags for claude". Expected: it is empty, and every chip is off
+   (none is coloured). Only when the right side shows `New session` and the caret is in "Flags for
+   claude", type `--verbose --model sonnet`; type nothing otherwise (click into the field again,
+   and look again). Expected: the ★ at the end of the field can be clicked, and its title (point
+   at it) is `Save these flags as a favourite`. Click it. Expected: a chip `--verbose --model
+   sonnet` comes at the end of the row, on (coloured), and the field still holds the text. The ★
+   is now greyed out; its title's second line says `these flags are a favourite already`.
+2. **A second look.** Press Esc (the form shows): the form closes. Press Ctrl+Shift+N. Expected:
+   the form again, its flags field empty and every chip off, the chip `--verbose --model sonnet`
+   in the same place.
+3. **Start a session with it.** Before any key: only when the right side shows `New session` and
+   the caret is in Directory (its first field), press Ctrl+A and type the throwaway folder's full
+   path over its text (`/home/<you>/skydeck-try`); type nothing otherwise (press Ctrl+Shift+N
+   again, or click into Directory, and look again). Leave the label and the group empty. Click
+   the chip `--verbose --model sonnet`. Expected: the flags field holds exactly `--verbose --model
+   sonnet`, and the chip is on; the caret is still in Directory (a click on a chip leaves it where
+   it was). Press Enter only when Directory holds exactly that path and the flags field exactly
+   that text. **Type no prompt into the new session.** Look that it is the new one: the header
+   shows a short id and "opened" a moment ago, and the folder `skydeck-try`; write the short id
+   down.
+4. **The flags it runs with.** In the window, the header's second line ends with `--verbose
+   --model sonnet` (the flags it was started with, follow-up F16; W35). In W, `skydeck show <short
+   id>`: its `launch:` line ends with `--verbose --model sonnet` too.
+5. **Remove, and Undo.** In the window press Ctrl+Shift+N, and look that the right side shows `New
+   session`. Point the mouse at the chip `--verbose --model sonnet` (read its text: it must be the
+   check's own): a × shows at its right end. Click the ×. Expected: the chip is gone, the line
+   next to Start reads `Removed --verbose --model sonnet · Undo` (a text longer than 28
+   characters is cut as the chip's, the whole in its hover title), and the flags field is
+   unchanged (empty). Click `Undo`. Expected: the chip is back in its place, and the line reads
+   `starts in this window · Esc closes` again. Press Esc (the form shows).
+6. **After a restart.** In W, `skydeck window --restart`. The window says for a few seconds that
+   the server is not answering, then shows every session again. Press Ctrl+Shift+N. Expected: the
+   same chips in the same order as in step 2, every one off. Press Esc (the form shows).
+7. **The end.** End the throwaway session: click its row in the list (the folder `skydeck-try`,
+   the short id of step 3) and look at the header's short id; look that its terminal has the
+   keyboard (the key bar says `Focus: terminal`; else Ctrl+Shift+L until it does); type `/exit`
+   and Enter, then `Close` on its ended bar. Then remove the check's favourite: Ctrl+Shift+N, look
+   that the right side shows `New session`, point at the chip `--verbose --model sonnet` (its
+   text, never one of yours), click its ×, and press Esc (the form shows) without clicking `Undo`.
+   The chips are then those of the setup.
+
+Write down: the favourites of the setup (how many, their texts); for each step whether it went as
+expected; the `launch:` line of step 4; anything that differs, and where.
+
+Not tried before this check was written: all of it, in Edge. The tests run the form in headless
+Chromium against a stand-in server, and the server on test databases; they never start `claude`.

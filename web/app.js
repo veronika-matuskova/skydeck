@@ -253,12 +253,25 @@ const terminalView = createTerminalView(dom.terminal, {
  * @type {typeof terminalView & { fits?: (width: number, height: number) => { cols: number, rows: number } | null }}
  */
 const fitting = terminalView;
+/**
+ * F15: the open new form's listener of the favourites (cards.js's `watchFavourites`; null while
+ * no form is open), and what a list says of them: its texts, [] for a list without the field.
+ * @type {((favourites: string[]) => void) | null}
+ */
+let favouritesListener = null;
+/** @param {ListMessage | null} list */
+const favouritesOf = (list) =>
+  Array.isArray(list?.favourites) ? list.favourites.filter((text) => typeof text === 'string') : [];
 const cards = createCards(dom.cards, {
   act: (action) => act(action),
   select: (id) => select(id, 'click'),
   edit: (what, sessionId) => edit(what, sessionId, '', ''),
   done: (sessionId) => markDone(sessionId, false),
   say: (text) => say(text),
+  watchFavourites: (listener) => {
+    favouritesListener = listener;
+    listener?.(favouritesOf(state.list));
+  },
 });
 const help = createHelp(dom.help);
 const toast = createToast(dom.toast);
@@ -647,6 +660,8 @@ function searchText(text, filter) {
 /** The acts whose result a dialog starts from: after this page's own `ok`, it waits for the list
  *  that holds it (C1). */
 const EDITS = new Set(['label', 'group', 'note']);
+/** F15's actions (S2 12.6): the list that holds one can come up to a second after its answer. */
+const FAVOURITE_ACTS = new Set(['favourite-add', 'favourite-remove']);
 /** Each dialog's list key, for D3's sentence. */
 const KEY_OF = { label: 'l', group: 'g', note: 'n', pr: 'p' };
 
@@ -668,6 +683,9 @@ const LIMITED = /** @type {Record<string, [string, string, number][]>} */ ({
   ],
   'pr-add': [['url', 'the address', PATH_BYTES]],
   'pr-rm': [['url', 'the address', PATH_BYTES]],
+  // F15 (S2 12.6).
+  'favourite-add': [['text', 'the flags', TEXT_BYTES]],
+  'favourite-remove': [['text', 'the favourite', TEXT_BYTES]],
 });
 
 /**
@@ -839,6 +857,11 @@ function act(action) {
         // The server sends no list equal to the last one, so after a save that changed nothing
         // shown none would come: a `view` asks for one, which the server answers at once
         // (review 2 of task 37, M2).
+        sendView();
+      }
+      if (result.ok && FAVOURITE_ACTS.has(action.kind)) {
+        // F15: the server sends a page at most one list a second, so the list of a change can
+        // come up to a second after its answer; a `view` asks for it now (as for EDITS above).
         sendView();
       }
       if (action.kind === 'resume' && typeof action['sessionId'] === 'string') {
@@ -1325,6 +1348,7 @@ function received(message) {
       // Stage C: before the render, whose keepKeyboard gives the zone the keyboard when a control
       // of the banner that had it went away (a restore began: Restore is gone).
       banner.render(message.banner ?? null);
+      favouritesListener?.(favouritesOf(message)); // F15: the open form's chips (S2 12.6)
       render();
       if (editor.shown()) {
         editor.update(message); // the dialog's session's row (task 38's list)
