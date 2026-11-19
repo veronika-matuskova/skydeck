@@ -18,7 +18,10 @@
 /* Four lines of one line each and of a fixed height whatever they hold (D12, ruled): nothing
    skydeck knows about a session changes the header's height, so the terminal under it is never
    resized for it. What does not fit is cut (an ellipsis on a text) or left out (the pull requests
-   that do not fit on their line); the short id and the buttons are never cut. */
+   that do not fit on their line); the short id and the buttons are not cut while the window has
+   room for them (line 3's two buttons, F18: down to a window of about 690 px without a ticket and
+   about 700 px with one, the list 400 px wide and three open pull requests; narrower, the line is
+   clipped at its end). The heights never change. */
 .header-top,
 .header-sub,
 .header-prs,
@@ -222,8 +225,39 @@
   flex: none;
   color: var(--faint);
 }
-.header-prs-button {
+/* F18: the ticket's button is the first of the two at the line's right end; `+ PR` stays last,
+   where it was. */
+.header-ticket-button {
   margin-left: auto;
+}
+/* F18: the ticket's chip, first on line 3, drawn as the line's chip and as a link (the group chip's
+   accent and underline). It is pinned: the open pull requests take only the room left (a basis of
+   0), so they give way whole before it loses a pixel; only on a line too short for it and the
+   buttons is it cut, with an ellipsis. Its name is one part (`.header-ticket-text`) so that a
+   later status can stand beside it. */
+.header-ticket {
+  flex: 0 1 auto;
+  display: inline-flex;
+  min-width: 0;
+  max-width: 24em;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 16px;
+  border-radius: 9px;
+  padding: 0 6px;
+  border: 1px solid var(--line2);
+  color: var(--accent);
+  white-space: pre;
+  cursor: pointer;
+}
+.header-ticket-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: underline;
+}
+.header-ticket-arrow {
+  flex: none;
 }
 .header-note-text {
   min-width: 0;

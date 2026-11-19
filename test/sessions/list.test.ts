@@ -417,6 +417,71 @@ test('isListed: an expired session with a note, a label, a group or an attached 
   }
 });
 
+test('isListed: an expired session with only a ticket (F18) is listed: something the user attached', () => {
+  const expired = ds({ id: S1, marks: ['expired'], transcript: { missingSinceNs: T0 } });
+  const row = rowOf(expired, { metas: [meta(S1, { ticket: 'https://example.com/browse/ABC-1' })] });
+  assert.equal(isListed(row, false), true);
+  assert.equal(isListed(row, true), true);
+  assert.equal(isListed(rowOf(expired, { metas: [meta(S1)] }), false), false, 'a row without it');
+});
+
+test('buildRows: the ticket (F18) is its address and the name ticketText gives with the configured ticketUrl', () => {
+  const session = ds({ id: S1 });
+  const metas = [meta(S1, { ticket: 'https://example.com/browse/ABC-1' })];
+  assert.deepEqual(rowOf(session, { metas }).ticket, {
+    url: 'https://example.com/browse/ABC-1',
+    text: 'ABC-1',
+  });
+  const issue = [meta(S1, { ticket: 'https://example.com/issues/ABC-1' })];
+  assert.deepEqual(rowOf(session, { metas: issue }).ticket?.text, 'ABC-1', 'the last part');
+  assert.deepEqual(
+    rowOf(session, { metas: issue, ticketUrl: 'https://example.com/issues/{key}' }).ticket?.text,
+    'ABC-1',
+  );
+  assert.deepEqual(
+    rowOf(session, {
+      metas: [meta(S1, { ticket: 'https://example.com/t?id=ABC-1' })],
+      ticketUrl: 'https://example.com/t?id={key}',
+    }).ticket?.text,
+    'ABC-1',
+    'the key, through the configured ticketUrl (the last part of the path would be "t")',
+  );
+  assert.equal(rowOf(session).ticket, null);
+  assert.equal(rowOf(session, { metas: [meta(S1)] }).ticket, null);
+});
+
+test('buildRows: a stored ticket that is not a link the window opens (the database changed by other means) is none', () => {
+  for (const ticket of [
+    'javascript:alert(1)',
+    'not a link',
+    'https://example.com/\u001b[31m',
+    '',
+  ]) {
+    assert.equal(rowOf(ds({ id: S1 }), { metas: [meta(S1, { ticket })] }).ticket, null, ticket);
+  }
+});
+
+test('buildRows: a stored value is read as a whole link only: a bare key is never built from the ticketUrl of today, and a user name or a password is none', () => {
+  const ticketUrl = 'https://example.com/browse/{key}';
+  for (const ticket of [
+    'ABC-123',
+    'https://user:pw@example.com/x',
+    'https://example.com@evil.example/',
+  ]) {
+    assert.equal(
+      rowOf(ds({ id: S1 }), { metas: [meta(S1, { ticket })], ticketUrl }).ticket,
+      null,
+      ticket,
+    );
+  }
+  // White space and the case of the scheme and host, as readTicket reads a whole link.
+  assert.deepEqual(
+    rowOf(ds({ id: S1 }), { metas: [meta(S1, { ticket: ' HTTPS://EXAMPLE.COM/x ' })], ticketUrl })
+      .ticket,
+    { url: 'https://example.com/x', text: 'x' },
+  );
+});
+
 test('isListed: a group taken from the title is not something the user attached', () => {
   const expired = ds({
     id: S1,
@@ -713,6 +778,16 @@ test('matchesFilter: the group, the note and the directory', () => {
   assert.equal(matchesFilter(filterRow(), 'projects/demo'), true);
 });
 
+test('matchesFilter: the ticket (F18) by its short name and by its address', () => {
+  const row = rowOf(ds({ id: S1, transcript: { aiTitle: 'Fix retry' } }), {
+    metas: [meta(S1, { ticket: 'https://github.com/owner/tools/issues/42' })],
+  });
+  for (const filter of ['tools #42', 'TOOLS #4', 'github.com/owner', 'issues/42']) {
+    assert.equal(matchesFilter(row, filter), true, filter);
+  }
+  assert.equal(matchesFilter(filterRow(), 'github'), false, 'a row without a ticket');
+});
+
 test('matchesFilter: an empty filter matches everything, even a row with nothing set', () => {
   assert.equal(matchesFilter(filterRow(), ''), true);
   assert.equal(matchesFilter(rowOf(ds({ id: S1, dir: null })), ''), true);
@@ -731,7 +806,14 @@ test('matchesFilter: it matches the sanitised text the list shows', () => {
 
 test('buildRows with nothing to build gives nothing', () => {
   assert.deepEqual(
-    buildRows({ sessions: [], metas: [], prs: [], sessionPrs: [], groupPattern: '^x' }),
+    buildRows({
+      sessions: [],
+      metas: [],
+      prs: [],
+      sessionPrs: [],
+      groupPattern: '^x',
+      ticketUrl: null,
+    }),
     [],
   );
 });
