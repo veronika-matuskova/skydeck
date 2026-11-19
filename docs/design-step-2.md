@@ -2298,6 +2298,28 @@ schemes (`test/web/section-band.test.ts`).
 Done sessions are hidden (design 7.1), with a footer "17 done hidden · show". Filtering and the
 switcher search done ones too (12.8).
 
+**No session at all** (follow-up F22, for a new user's first window). While the list holds no
+session at all — none in any section (a folded Earlier counts its own; done sessions hidden count
+for none) and no filter or chip set — it says so under the Open band, in a short note muted in
+`--dim` (at least 4.5 : 1 on the list, in each scheme; `--faint` is not) and in the list's own
+type, line by line: `No session here yet.`, `Start claude in any terminal: it shows here as soon as
+it starts.`, `Or start one here with Ctrl+Shift+N.` (in a browser tab, where the browser keeps that
+key, `Or start one here with + New in the key bar.`: the page's app-only and tab-only rule picks
+the line) and `Ctrl+Shift+H shows every key.`. It is a note (`role="note"`), no control and not in
+the tab order, and it wraps inside the list's width. A filter or a chip that hides every session
+keeps its own line, `No session matches the filter.` (12.8). It comes and goes with the lists, with
+no reload: it goes when the first session is listed and comes back when the last one is done or
+gone (the footer then says how many are done). With sessions it is not in the list at all, so
+nothing of a list with sessions moves. The right side, blank before while nothing is selected
+there, then has one line in the same colour above the empty cards, `The selected session shows
+here.` (12.6): its terminal, its card or its resume card, once there is one; it is no card of a
+session. Whether the list holds no session is one rule of the page's (`holdsNoSession`,
+`web/list-text.js`), read by both. Ruled by the plan
+owner: a session started in a terminal is listed from its start, before its first prompt (design
+7.2: only one that ends before its first prompt has no transcript and drops out), so the note says
+"as soon as it starts"; and the right side's line names no session to pick (it shows only while
+there is none) and no terminal (a session started in another terminal shows its card there).
+
 The title bar shows the counts, e.g. `● 3 need you · 3 working · 2 idle`, and the window title is
 `(3) skydeck` while 3 sessions need you, so the taskbar shows it.
 
@@ -3059,6 +3081,11 @@ nothing; `ls` is unchanged.
   or Undo takes no keyboard. The form opens with the flags field empty and every chip off, whatever was
   used before: no favourite is ever on without a click, and Start sends the field's text, as
   before.
+- **Nothing, while the list holds no session at all** (follow-up F22): one muted line above the
+  empty cards, `The selected session shows here.` (12.1), also while a session the
+  list no longer shows (the last one marked done) is still selected; the New form takes the right
+  side, and the line goes while it is shown. With sessions, nothing shown on the right still shows
+  nothing (12.9).
 
 ### 12.7 The restore banner
 
@@ -3345,12 +3372,14 @@ the terminal). They are buttons: Tab from the filter field reaches them, Enter o
 one, and while one has the keyboard no list key acts, as on any button of the list zone. The selection is never on a row the
 list does not show: when the selected row stops being shown otherwise (a filter, done sessions
 hidden again, the row gone from the list), no row is selected — the right side shows a terminal
-of the window that holds the session, else nothing —, Enter does nothing, and ↑ ↓ start from the
+of the window that holds the session, else nothing (but 12.1's line while the list holds no
+session at all) —, Enter does nothing, and ↑ ↓ start from the
 first row shown (ruled by the plan owner, plan task 27); when the list shows the row again, it is
 selected again. From stage E the right side takes such a session's row from the list's
 `selectedRow` (8.2.3): its terminal is shown with its header (stage D's, so that the header's
 controls and their dialogs edit that session) and its ended bar with Resume and Close (12.6); a
-session without a terminal of the window shows nothing, never its card. The header's Done on such
+session without a terminal of the window shows nothing (but 12.1's line while the list holds no
+session at all), never its card. The header's Done on such
 a session takes its toast from the row, since it is in no section: `Marked done. Stays under Open
 while it runs; …` while it runs or starts, else `Marked done: hidden from the list. …` (ruled by
 the lead on 2026-11-15). The list keys (`l`, F2,
