@@ -1620,11 +1620,12 @@ Setup:
   caption line, and the throwaway session's row. A session's resume card shows `Resume here`: never
   click it in these checks.
 - **Leave the window as you found it.** Write down at the start what the filter holds, which chips
-  are on (`Show done` among them), which blocks are closed (a card drawn as its caption alone: `▸`,
+  are on, whether the switch `Show done` is on (a ✓ in its box), which blocks are closed (a card drawn as its caption alone: `▸`,
   the group's name and a number, no session under it), whether Earlier is unfolded, and your
-  keyboard layout. Each check starts from an empty filter (Esc in its field) and no chip on (a click
-  on each chip that is on). At the end put back what you wrote down: the filter's text typed again
-  into its field (look for the caret first), each chip that was on clicked on again, each block you
+  keyboard layout. Each check starts from an empty filter (Esc in its field), no chip on (a click
+  on each chip that is on) and `Show done` off (a click on it when its box has a ✓). At the end put back what you wrote down: the filter's text typed again
+  into its field (look for the caret first), each chip that was on clicked on again, `Show done` as
+  it was, each block you
   closed opened again (a click on its caption), Earlier folded or unfolded as it was, and your own
   layout (Win+Space). Fold Earlier only while the selected session is not in Earlier (a fold with
   the selection inside it selects the line above it, which may be a real session); when the
@@ -1633,7 +1634,7 @@ Setup:
 ## W30. Search on your own sessions (real claude)
 
 Setup: the throwaway session selected (look at the short id in its header), the filter empty, no
-chip on. Write down how many sessions the title bar counts.
+chip on and `Show done` off (a click on it when its box has a ✓). Write down how many sessions the title bar counts.
 
 1. **Two words.** Take one of your ticket keys and a word of that session's title (`ORB-2107` and
    `login` below). Click into the filter's field: its caret blinks. Type `orb-2107 login`, in lower
@@ -1648,14 +1649,23 @@ chip on. Write down how many sessions the title bar counts.
    whose title, group, note, directory or pull request holds those characters, which is rare).
    Backspace twice (4 characters left): still listed. Backspace once more (3 characters): the id
    no longer counts, only the fields do; mostly `No session matches the filter.` Press Esc.
-3. **The chips.** Look at the key bar's `Focus: …` and keep it in mind. Click `Running`. Expected:
-   the chip is drawn pressed, only the sessions under Open are listed, and `Focus: …` did not
-   change. Click it again: it is off, the list as before. The same with `Open PR` (only the
-   sessions with a pull request that is not merged or closed) and `Has note` (only those with a
-   note). Then `Running` and `Has note` together: only the running sessions that have a note
-   (`No session matches the filter.` when none has one); click both off. Then `Show done`: the
-   done sessions show with their `done` mark and the footer says `done sessions shown · hide`;
-   click it again, and the footer is `<n> done hidden · show` again (or gone when none is done).
+3. **The chips.** Look at the key bar's `Focus: …` and keep it in mind. Under the field are four
+   chips, `Running`, `Open PR`, `Has note` and `Done`, and at the right end of their row the switch
+   `Show done`, a small box with its label. With `Show done` off, click `Running`. Expected: the
+   chip is drawn pressed, only the sessions under Open are listed, and `Focus: …` did not change.
+   Click it again: it is off, the list as before. The same with `Open PR` (only the sessions with a
+   pull request that is not merged or closed) and `Has note` (only those with a note, and no done
+   one among them but one that still runs: when done sessions have a note, the footer says `<n>
+   done hidden · show`; when every session with a note is done, the list says `Only done sessions
+   match the filter.` above it). While a chip is on, Earlier stays folded or unfolded as it was,
+   and an open card stays a card while the chip leaves at least two of its sessions (its number
+   counts them); one left is a plain row. Then `Running` and `Has note` together: only
+   the running sessions that have a note (`No session matches the filter.` when none has one);
+   click both off. Then `Done`: only the done sessions, each with its `done` mark, in their sections
+   and cards, no footer; `Show done` is drawn dimmed, and hovering it shows `the Done filter lists
+   done sessions by itself`. Click `Done` off. Then `Show done`: a ✓ in its box, the done sessions
+   show with their `done` mark and the footer says `done sessions shown · hide`; click it again, and
+   the footer is `<n> done hidden · show` again (or gone when none is done).
 4. **A block's card.** Blocks are open by default and drawn as cards: a box with a thin edge; at its
    top a caption line with the arrow `▾`, the group's name and the number of its sessions; the
    block's sessions inside it as ordinary rows, none indented and none marked `×<n>`. This step
