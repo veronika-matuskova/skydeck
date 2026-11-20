@@ -109,9 +109,37 @@ describe('the window: an empty copy no terminal of the window shows', () => {
       running: 0,
       starting: 0,
       elsewhere: 0,
+      background: 0,
       notRunning: 1,
     });
     assert.equal(message.doneHidden, 0);
+  });
+
+  test('F34: one Claude Code marks as a background session: in no count while hidden, `1 in the background` once `a` shows it', () => {
+    const [own] = sessions();
+    const copy = sessions()[1];
+    assert.ok(own !== undefined && copy !== undefined);
+    const live = {
+      pid: 9000,
+      sessionId: COPY,
+      cwd: null,
+      procStart: 500,
+      entrypoint: 'cli',
+      name: null,
+      status: 'idle',
+      waitingFor: null,
+      updatedAtNs: null,
+      statusUpdatedAtNs: null,
+      background: true,
+      mtimeNs: T0,
+    };
+    const background = rows([own, { ...copy, holders: [{ ...holder(9000), live }] }]);
+    const hidden = buildListMessage(input({ rows: background }));
+    assert.deepEqual(shownIds(hidden), [ORIGINAL]);
+    assert.deepEqual([hidden.counts.background, hidden.counts.elsewhere], [0, 0]);
+    const shown = buildListMessage(input({ rows: background, view: { showDone: true } }));
+    assert.equal(rowIn(shown, COPY).elsewhere?.background, true);
+    assert.deepEqual([shown.counts.background, shown.counts.elsewhere], [1, 0]);
   });
 
   test('not running: not under Recent either', () => {

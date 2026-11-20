@@ -239,12 +239,13 @@ Last, install looks at **Claude Code's ← shortcut**. In a Claude Code session,
 sends the session to the background and opens Claude Code's agent view. In skydeck's window ← also
 closes a group in the list, so a ← meant for the list but typed into a terminal sends that
 terminal's session away: the conversation goes on in a background session that the window lists as
-"running in another terminal" once it has a message (before that `a` shows it, marked `empty copy`:
-"Using the window"), the session the terminal had stays in the list, and what you type in the
-terminal then goes to a background session. Claude Code keeps the switch, `leftArrowOpensAgents`, in
-its global config file (not in `settings.json`): `~/.claude.json`, or the `.claude.json` inside
-`CLAUDE_CONFIG_DIR` when that is set (inside `claudeHome` when `config.json` sets it to anything but
-the default `~/.claude`). When the shortcut is on, install says so and asks (on stderr):
+"running in Claude Code's background" once it has a message (before that `a` shows it, marked
+`empty copy`: "Using the window"), the session the terminal had stays in the list, and what you
+type in the terminal then goes to a background session. Claude Code keeps the switch,
+`leftArrowOpensAgents`, in its global config file (not in `settings.json`): `~/.claude.json`, or
+the `.claude.json` inside `CLAUDE_CONFIG_DIR` when that is set (inside `claudeHome` when
+`config.json` sets it to anything but the default `~/.claude`). When the shortcut is on, install
+says so and asks (on stderr):
 
 ```
 Claude Code's ← shortcut is on: ← on an empty prompt sends the session to the background and opens agent view.
@@ -788,7 +789,12 @@ effect.
   exact command it will run. Enter, a double click or `Resume here` resumes it into the window.
 - **A running session** of the window: a click shows its terminal. A session that runs in another
   terminal shows a card instead: it cannot be shown in the window. Once you `/exit` it there, it
-  can be resumed here.
+  can be resumed here. A session in Claude Code's background has no terminal at all. For one sent
+  there with ←, its row (once it is listed: an empty copy is not, see the next point) says
+  `running in Claude Code's background`, and its card says to run `claude agents` in a terminal to
+  see it or end it. The same is expected for the other ways into the background (`/bg`, `claude
+  --bg`, `/fork`); one that Claude Code does not mark as a background session reads as `running in
+  another terminal`. Once it has ended it can be resumed here too.
 - **A copy made by Claude Code's background feature.** Agent view and `/bg` can start a copy of a
   session (`claude --fork-session --resume …`): a new session that holds only the title of the one
   it copies, running in Claude Code's background. While it has no message and sits idle the list
@@ -918,9 +924,11 @@ requests — …`): look at it before you save.
 `Marked done: hidden from the list. It comes back on new activity.`, or for a session that runs
 in another terminal, or in a terminal of the window that skydeck cannot end (one started before
 skydeck was updated to a version that can end sessions, or one whose terminal is not connected),
-`Marked done. skydeck cannot end this one: end it in its terminal. Hidden once it stops.` — such a
-row stays under Open with a `done` mark until the session stops. `Undo` marks it undone again: a
-click presses it, or Tab until it has the keyboard and then Enter.
+`Marked done. skydeck cannot end this one: end it in its terminal. Hidden once it stops.`, and for
+one that runs in Claude Code's background `Marked done. It runs in Claude Code's background: end it
+in claude agents. Hidden once it stops.` — such a row stays under Open with a `done` mark until
+the session stops. `Undo` marks it undone again: a click presses it, or Tab until it has the
+keyboard and then Enter.
 
 For a session that runs in a terminal of the window, `d` or `Done` first asks, in a dialog over the
 window: `Mark done: <its title>` and `This session is still running.`, with `End session and mark
@@ -1292,8 +1300,10 @@ so they show for the sessions that run in another terminal too; `ended unexpecte
 the window's own terminals.
 
 **The title bar** starts with the count, `3 need you` (`1 needs you`), after a dot in the waiting
-colour, before the counts per state: `3 need you · 2 working · 1 waiting · 14 not running`. A
-session that needs you is counted there and in no other count. The count takes in every session
+colour, before the counts per state: `3 need you · 2 working · 1 waiting · 14 not running`, with
+`1 in another terminal` and `1 in the background` (a session Claude Code runs in its background)
+before `not running` when there are such sessions. A session that needs you is counted there and
+in no other count. The count takes in every session
 the list lists, also those the filter or the folded Earlier hides; a done session that has stopped
 is counted only while done sessions are shown (`show`, `a`). The window's title, which the taskbar
 button shows, is `(3) skydeck`, and `skydeck` while none needs you.
@@ -1500,7 +1510,8 @@ broke before the first line ends `it may have started the restore: run skydeck t
 started`.
 
 **`skydeck show <ref>`** marks a holder that is the program of a terminal of the window, or runs
-under it: `holder:    pid 4242 since 2026-11-12T08:58:00.000Z (in the skydeck window)`. It needs no
+under it: `holder:    pid 4242 since 2026-11-12T08:58:00.000Z (in the skydeck window)`, and a
+holder that Claude Code runs in its background with `(in Claude Code's background)`. It needs no
 running server and asks it nothing; `--json` is unchanged.
 
 #### Search, the chips and blocks (stage E)
@@ -1699,8 +1710,9 @@ without a terminal of the window shows nothing on the right then, no card (only 
 selected session shows here.` while the list holds no session at all). `Done` in the header
 of such a session asks first while it runs in a terminal of the window that can end it (as `d`
 does, "Done." above); for another one that runs or starts it says `Marked done. skydeck cannot end
-this one: end it in its terminal. Hidden once it stops.`, else `Marked done: hidden from the list.
-It comes back on new activity.` The new form (Ctrl+Shift+N) starts in its directory while a terminal of the window
+this one: end it in its terminal. Hidden once it stops.` (for one in Claude Code's background
+`Marked done. It runs in Claude Code's background: end it in claude agents. Hidden once it
+stops.`), else `Marked done: hidden from the list. It comes back on new activity.` The new form (Ctrl+Shift+N) starts in its directory while a terminal of the window
 holds it. When the list shows the session again (the filter cleared), it is selected again.
 
 #### The icon (stage E)
@@ -2000,7 +2012,7 @@ broken installation.
 | scripted runs dropped | `info`: how many events of scripted runs (print mode, SDK hosts, editor extensions) were dropped; they are not sessions a person works in. A scripted run that holds a session skydeck knows is not dropped (see "If something goes wrong"). |
 | last refresh | Something was skipped at the last command: a hook file, a process, or a transcript folder or file that could not be read. The line says what and why. |
 | Claude Code's folders | `<claudeHome>/sessions` or something under `<claudeHome>/projects` cannot be read. A folder that does not exist yet is only `info`. |
-| Claude Code's ← shortcut | Never a problem: it is your choice. `ok       Claude Code's ← shortcut is off (<file>)`; while it is on, `info     Claude Code's ← shortcut is on: ← on an empty prompt sends a window terminal's session to the background, and the list then shows it running in another terminal once it has a message (before that, a in the window shows it); to turn it off: skydeck install asks, or /config in Claude Code ("← opens agents")`; when the file cannot tell, `info     Claude Code's ← shortcut: cannot tell from <file> (<reason>); skydeck leaves it alone; to turn it off: /config in Claude Code ("← opens agents")`, with the reasons of install's line (Install, step 3). It shows nothing else of the file. After you turned the shortcut off, an `on` here means the key is `true` or gone again: you turned it on in `/config`, or a session that was running wrote its older copy of the file back (then turn it off again once that session has ended). |
+| Claude Code's ← shortcut | Never a problem: it is your choice. `ok       Claude Code's ← shortcut is off (<file>)`; while it is on, `info     Claude Code's ← shortcut is on: ← on an empty prompt sends a window terminal's session to the background, and the list then shows it running in Claude Code's background once it has a message (before that, a in the window shows it); to turn it off: skydeck install asks, or /config in Claude Code ("← opens agents")`; when the file cannot tell, `info     Claude Code's ← shortcut: cannot tell from <file> (<reason>); skydeck leaves it alone; to turn it off: /config in Claude Code ("← opens agents")`, with the reasons of install's line (Install, step 3). It shows nothing else of the file. After you turned the shortcut off, an `on` here means the key is `true` or gone again: you turned it on in `/config`, or a session that was running wrote its older copy of the file back (then turn it off again once that session has ended). |
 | `gh` | `gh` is not installed, or not logged in, or GitHub cannot be reached. Run `gh auth status`. |
 | terminal | With `"terminal": "wezterm"`: `wezterm cli --no-auto-start list` failed. Is a WezTerm window open? With `"here"` the line is `ok`, and with `"window"` too: `terminal: window (sessions start in the skydeck window; resume, new and restore need skydeck window to run)`; whether the server runs is the window's server line. |
 
@@ -2425,8 +2437,8 @@ file.
 | `skydeck: not started through bin/skydeck` | A `--here` start needs the launcher. Run skydeck as `~/.local/bin/skydeck` or `bin/skydeck`, not as `node bin/bootstrap.mjs`. |
 | `doctor`: `no SessionStart hook entry ...` | Run `skydeck install`. Claude Code may have rewritten its settings file. |
 | A session you expect is not in `skydeck ls` | A session that is not running and never received a prompt has no transcript and is not listed. One marked done needs `--all`, and so does a copy Claude Code's background feature made that has no message yet ("Using the window", "A copy made by Claude Code's background feature"). A scripted run (print mode, an SDK host, an editor extension) is not a session of its own and is not listed (`doctor` counts what it drops), and neither is a session whose transcript says it was not started by the interactive `claude` (its entry point is not `cli`). Run `skydeck doctor`. |
-| `skydeck: <id> is running (pid <n>)` when you resume | The session runs in another terminal. skydeck never resumes a session twice (exit 4). |
-| What you type into a window terminal shows up on another row, "running in another terminal" | ← on the terminal's empty prompt sent its session to the background (Claude Code's agent view). That row shows once the background session has a message (`a` shows it before, marked `empty copy`); the session the terminal had stays in the list. `skydeck doctor` says whether that shortcut is on; `skydeck install` offers to turn it off (Install, step 3). |
+| `skydeck: <id> is running (pid <n>)` when you resume | The session runs in another terminal, or in Claude Code's background (`skydeck show <ref>` then says `(in Claude Code's background)` next to the holder; `claude agents` shows it). skydeck never resumes a session twice (exit 4). |
+| What you type into a window terminal shows up on another row, "running in Claude Code's background" | ← on the terminal's empty prompt sent its session to the background (Claude Code's agent view). That row shows once the background session has a message (`a` shows it before, marked `empty copy`); the session the terminal had stays in the list. `skydeck doctor` says whether that shortcut is on; `skydeck install` offers to turn it off (Install, step 3). |
 | The same, but you see no such terminal | A scripted run (print mode such as `claude -p --resume <id>`, an SDK host, an editor extension) holds that session. skydeck shows it as `running`, `skydeck show <ref>` says `(scripted run)` next to the holder, and `resume` is refused until that process ends. |
 | `skydeck: <id> is being resumed (<n> s ago); try again in <m> s` | A resume of that session started less than a minute ago. When skydeck printed a command for you to run, the same hold applies for that minute. |
 | `skydeck: the window's server is not started from inside a Claude Code session: …` | `skydeck window` was run as a `!` command of a Claude Code session, or from a shell that inherited `CLAUDECODE`. Run it in a WSL terminal of your own. |

@@ -128,6 +128,7 @@ test('buildListMessage: empty input gives empty sections and zero counts', () =>
     running: 0,
     starting: 0,
     elsewhere: 0,
+    background: 0,
     notRunning: 0,
   });
   assert.equal(message.doneHidden, 0);
@@ -389,7 +390,12 @@ test('open order: a session running elsewhere is not placed by an ended terminal
   const row = rowIn(message, S1);
   assert.equal(row.terminal, null);
   assert.equal(row.slot, null);
-  assert.deepEqual(row.elsewhere, { pid: 5000, tty: '/dev/pts/9', dir: '/home/dev/projects/demo' });
+  assert.deepEqual(row.elsewhere, {
+    pid: 5000,
+    tty: '/dev/pts/9',
+    dir: '/home/dev/projects/demo',
+    background: false,
+  });
   assert.equal(message.counts.elsewhere, 2);
 });
 
@@ -471,6 +477,7 @@ test('rows: elsewhere carries the pid and tty from the mapping', () => {
     pid: 9000,
     tty: '/dev/pts/7',
     dir: '/home/dev/projects/demo',
+    background: false,
   });
   assert.equal(rowIn(message, S1).terminal, null);
 });
@@ -1009,7 +1016,54 @@ test('counts: per state of the listed rows, starting and elsewhere separately', 
     running: 1,
     starting: 1,
     elsewhere: 1,
+    background: 0,
     notRunning: 1,
+  });
+});
+
+test('F34: counts: a session in Claude Code’s background is counted as such, not as in another terminal', () => {
+  const background = (id: string, pid: number): DerivedSession => {
+    const session = running(id, { pid, procStart: 600 });
+    const [holder] = session.holders;
+    assert.ok(holder !== undefined);
+    const live = {
+      pid,
+      sessionId: id,
+      cwd: null,
+      procStart: 600,
+      entrypoint: 'cli',
+      name: null,
+      status: 'busy',
+      waitingFor: null,
+      updatedAtNs: null,
+      statusUpdatedAtNs: null,
+      background: true,
+      mtimeNs: T0,
+    };
+    return { ...session, holders: [{ ...holder, live }] };
+  };
+  const message = buildListMessage(
+    input({
+      rows: rows([background(S1, 9001), background(S2, 9002), running(S3, { pid: 9003 })]),
+      elsewhere: new Map([
+        [S1, { pid: 9001, tty: null }],
+        [S2, { pid: 9002, tty: null }],
+        [S3, { pid: 9003, tty: '/dev/pts/3' }],
+      ]),
+    }),
+  );
+  assert.deepEqual(
+    [S1, S2, S3].map((id) => rowIn(message, id).elsewhere?.background),
+    [true, true, false],
+  );
+  assert.deepEqual(message.counts, {
+    working: 0,
+    waiting: 0,
+    running: 0,
+    starting: 0,
+    elsewhere: 1,
+    background: 2,
+    notRunning: 0,
   });
 });
 
@@ -1333,6 +1387,7 @@ test('counts: a row that needs you is counted in needYou.count and in no field o
     running: 2,
     starting: 0,
     elsewhere: 0,
+    background: 0,
     notRunning: 2,
   });
   assert.deepEqual(withFacts.counts, {
@@ -1341,6 +1396,7 @@ test('counts: a row that needs you is counted in needYou.count and in no field o
     running: 1,
     starting: 0,
     elsewhere: 0,
+    background: 0,
     notRunning: 0,
   });
   const total = (counts: typeof without.counts) =>

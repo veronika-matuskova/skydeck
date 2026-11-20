@@ -8,7 +8,7 @@
 // through the same rule again before showing it (`sanitize`, a copy of src/text/sanitize.ts that
 // the test holds to the server's): a page that shows foreign text decides that for itself.
 
-/** @import { ChipPayload, ListMessage, RowPayload, SectionPayload, TerminalPayload } from '../src/window/protocol.ts' */
+/** @import { ChipPayload, ElsewherePayload, ListMessage, RowPayload, SectionPayload, TerminalPayload } from '../src/window/protocol.ts' */
 /** @import { RowTicketPayload } from '../src/window/protocol.ts' */
 import { attentionLine } from './attention-text.js';
 import { ageBetween } from './format.js';
@@ -397,9 +397,22 @@ function titleOf(row) {
 }
 
 /**
+ * Where a session runs that no terminal of the window shows (S2 7.9), for its row's second line
+ * and the header's state: `running in another terminal`, or (F34) `running in Claude Code's
+ * background` while the server says Claude Code runs it there (absent: another terminal).
+ * @param {ElsewherePayload} elsewhere
+ * @returns {string}
+ */
+export function elsewhereText(elsewhere) {
+  return elsewhere.background === true
+    ? "running in Claude Code's background"
+    : 'running in another terminal';
+}
+
+/**
  * The second line of a running or starting row (S2 12.2, stage A: states only): `starting…` (or
- * S2 7.5's `started, not reported`), `running in another terminal`, else the state, its detail
- * and its time (`working 4m`, `waiting · permission · 3m`).
+ * S2 7.5's `started, not reported`), `running in another terminal` (`elsewhereText`), else the
+ * state, its detail and its time (`working 4m`, `waiting · permission · 3m`).
  * @param {RowPayload} row
  * @param {string} nowNs
  * @param {TerminalPayload | null} terminal
@@ -410,7 +423,7 @@ function stateLineOf(row, nowNs, terminal) {
     return terminal?.notReported === true ? 'started, not reported' : 'starting…';
   }
   if (row.elsewhere !== null) {
-    return 'running in another terminal';
+    return elsewhereText(row.elsewhere);
   }
   const detail = clean(row.stateDetail);
   const age = ageBetween(nowNs, row.sinceNs);
@@ -558,12 +571,14 @@ const COUNTS = /** @type {const} */ ([
   ['running', 'running', 'running'],
   ['starting', 'starting', 'starting'],
   ['elsewhere', 'elsewhere', 'in another terminal'],
+  ['background', 'background', 'in the background'], // F34; absent from a server before it
   ['notRunning', 'not-running', 'not running'],
 ]);
 
 /**
  * The title bar's counts per state (S2 12.1, stage A: states only; "needs you" comes with stage
- * B): each state that has sessions, `3 working`, `2 in another terminal`, `14 not running`.
+ * B): each state that has sessions, `3 working`, `2 in another terminal`, (F34) `1 in the
+ * background`, `14 not running`.
  * @param {ListMessage['counts']} counts
  * @returns {{ state: string, text: string }[]}
  */

@@ -176,6 +176,21 @@ describe('rowText: a running row has two lines', () => {
     assert.equal(text.stateLine, 'running in another terminal');
   });
 
+  test('F34: a row Claude Code runs in its background: "running in Claude Code\'s background"; `background` false or absent is another terminal\'s', () => {
+    const where = (elsewhere: RowPayload['elsewhere']) =>
+      rowText(row({ state: 'working', elsewhere }), now, null);
+    const background = where({ pid: 4242, tty: null, dir: null, background: true });
+    assert.equal(background.stateLine, "running in Claude Code's background");
+    assert.equal(background.icon, 'working', 'the icon of its state, as another terminal’s');
+    assert.equal(background.slot, '');
+    for (const elsewhere of [
+      { pid: 4242, tty: '/dev/pts/3', dir: null, background: false },
+      { pid: 4242, tty: '/dev/pts/3', dir: null },
+    ]) {
+      assert.equal(where(elsewhere).stateLine, 'running in another terminal');
+    }
+  });
+
   test('a running session marked done keeps its two lines and has the mark `done` (S2 12.10)', () => {
     const text = rowText(row({ state: 'working', sinceNs: ago(MIN), done: true }), now, null);
     assert.equal(text.stateLine, 'working 1m');
@@ -700,6 +715,33 @@ describe("countsText: the title bar's counts per state (S2 12.1, stage A)", () =
         { state: 'elsewhere', text: '2 in another terminal' },
         { state: 'not-running', text: '14 not running' },
       ],
+    );
+  });
+
+  test('F34: the sessions in Claude Code’s background have their own count, right after another terminal’s; absent (a server before F34) is none', () => {
+    const counts = {
+      working: 1,
+      waiting: 0,
+      running: 0,
+      starting: 0,
+      elsewhere: 2,
+      background: 3,
+      notRunning: 4,
+    };
+    assert.deepEqual(countsText(counts), [
+      { state: 'working', text: '1 working' },
+      { state: 'elsewhere', text: '2 in another terminal' },
+      { state: 'background', text: '3 in the background' },
+      { state: 'not-running', text: '4 not running' },
+    ]);
+    assert.deepEqual(
+      countsText({ ...counts, elsewhere: 0, background: 1 }).map((part) => part.text),
+      ['1 working', '1 in the background', '4 not running'],
+    );
+    const { background: _none, ...before } = counts;
+    assert.deepEqual(
+      countsText(before).map((part) => part.text),
+      ['1 working', '2 in another terminal', '4 not running'],
     );
   });
 

@@ -253,6 +253,10 @@ export interface ElsewherePayload {
   pid: number;
   tty: string | null;
   dir: string | null;
+  /** Follow-up F34: Claude Code runs the session in its background (the holder's trusted
+   *  live-session file says so, design.md 14), not in a terminal of the user's. The server always
+   *  sends it; optional for the reader: absent (a scripted row, a server before F34) is false. */
+  background?: boolean;
 }
 /** A list row: the display fields of design 7.4's row and the window's own (S2 8.2.3). */
 export interface RowPayload {
@@ -405,6 +409,10 @@ export interface ListMessage {
     running: number;
     starting: number;
     elsewhere: number;
+    /** Follow-up F34: the sessions Claude Code runs in its background (`elsewhere.background`),
+     *  each counted here and not in `elsewhere`. The server always sends it; optional for the
+     *  reader: absent (a server before F34) is none. */
+    background?: number;
     notRunning: number;
   };
   /** Plan B7: `count`, the listed rows that need you, whatever the filter or the fold (the title

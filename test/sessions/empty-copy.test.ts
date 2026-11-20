@@ -196,6 +196,7 @@ function runningCopy(status: string | null): DerivedSession {
     waitingFor: status === 'waiting' ? 'a permission' : null,
     updatedAtNs: T0,
     statusUpdatedAtNs: T0,
+    background: true, // a copy of the background feature (F34): it changes nothing here
     mtimeNs: T0,
   };
   return one(
