@@ -102,7 +102,13 @@ const EVERYTHING: Record<string, { spec: Spec; entries: Record<string, Maker> }>
   },
   config: {
     spec: CONFIG_DIR,
-    entries: { 'config.json': file('config.json') },
+    entries: {
+      'config.json': file('config.json'),
+      // F36: the settings screen's copy, and the temporaries of its writes.
+      'config.json.skydeck-backup': file('config.json.skydeck-backup'),
+      '.config.json.<hex>.tmp': file('.config.json.0123456789ab.tmp'),
+      '.config.json.skydeck-backup.<hex>.tmp': file('.config.json.skydeck-backup.0123456789ab.tmp'),
+    },
   },
   runtime: {
     spec: RUNTIME_DIR,
@@ -222,6 +228,54 @@ describe('purgeDir: what it does not remove', () => {
         assert.ok(lstatSync(path), `${make} ${name}`);
         if (make === 'link') unlinkSync(path);
         else rmdirSync(path);
+      }
+      assert.equal(readFileSync(target, 'utf8'), 'mine');
+    }
+  });
+
+  test("the configuration folder (F36): a link or a folder with the copy's or a temporary's name, and a near-miss name of a file, each left alone, what it points at whole", (t) => {
+    for (const make of ['link', 'folder', 'file'] as const) {
+      const names =
+        make === 'file'
+          ? [
+              'config.json.skydeck-backup2',
+              'config.json.skydeck-backup-20261120T120000Z',
+              'config.json.bak',
+              '.config.json.tmp',
+              '.config.json.0123456789a.tmp',
+              '.config.json.0123456789abc.tmp',
+              '.config.json.0123456789AB.tmp',
+              '.config.jsonx.0123456789ab.tmp',
+              '.config.json.skydeck-backup.tmp',
+              'x.config.json.0123456789ab.tmp',
+              '.config.json.0123456789ab.tmp.x',
+            ]
+          : [
+              'config.json.skydeck-backup',
+              '.config.json.0123456789ab.tmp',
+              '.config.json.skydeck-backup.0123456789ab.tmp',
+            ];
+      const { platform, root } = platformOf(t);
+      const dir = join(root, 'config');
+      mkdirSync(dir);
+      writeFileSync(join(dir, 'config.json'), '{}');
+      const target = join(root, 'mine');
+      writeFileSync(target, 'mine');
+      for (const name of names) {
+        const path = join(dir, name);
+        if (make === 'link') symlinkSync(target, path);
+        else if (make === 'folder') mkdirSync(path);
+        else writeFileSync(path, 'mine');
+
+        assert.deepEqual(
+          purgeDir(platform, dir, CONFIG_DIR),
+          { kind: 'left', why: `holds ${name}, which skydeck did not write` },
+          `${make} ${name}`,
+        );
+        assert.ok(lstatSync(path), `${make} ${name}`);
+        assert.ok(existsSync(join(dir, 'config.json')), `${make} ${name}: the folder is whole`);
+        if (make === 'folder') rmdirSync(path);
+        else unlinkSync(path);
       }
       assert.equal(readFileSync(target, 'utf8'), 'mine');
     }
