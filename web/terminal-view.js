@@ -40,8 +40,8 @@ const CLIPBOARD_BYTES = 1024 * 1024;
 /** S2 8.2.6: a proposed size is at most this. */
 const MAX_COLS = 1000;
 const MAX_ROWS = 500;
-/** The font list of the plan (task 28; check W9), as style.css's `--term-font`. No symbol or emoji
- *  font is named (#154): Windows' own fallback draws an emoji in colour (Segoe UI Emoji) and a
+/** The terminal's font list (S2 12.6, #154; check W9), as style.css's `--term-font`. No symbol or
+ *  emoji font is named: Windows' own fallback draws an emoji in colour (Segoe UI Emoji) and a
  *  symbol such as ⏺ ⎿ ⏵ in the program's colour. "Segoe UI Symbol" here drew every emoji in one
  *  colour and a joined emoji as its parts, squashed into two cells; "Segoe UI Emoji" here would
  *  draw ⏺ ⚠ ❤ as colour emoji, deaf to the program's colours. */
